@@ -5,11 +5,12 @@ Main application window for VapourSynth Image Upscaler.
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
-from urllib.request import urlretrieve
+from urllib.request import urlretrieve, Request, urlopen
 
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -41,7 +42,7 @@ from ..core.constants import (
 from ..core.config import Config
 from ..core.utils import cleanup_gui_input_tmp, format_time_hms
 from .dialogs import CustomResolutionDialog
-from .worker_thread import UpscaleWorkerThread
+from .worker_thread import UpscaleWorkerThread, ClipboardWorkerThread
 
 if TYPE_CHECKING:
     pass
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
         self._total_files_in_batch: int = 0
         self._completed_files_in_batch: int = 0
         self._current_avg_per_image: float = 0.0
+        self._current_image_start_time: float = 0.0  # When current image started
 
         # Custom resolution / secondary state
         self._custom_res_enabled = False
@@ -84,9 +86,17 @@ class MainWindow(QMainWindow):
         self._secondary_mode = "width"
         self._secondary_width = 1920
         self._secondary_height = 1080
+        # Pre-scaling state
+        self._prescale_enabled = False
+        self._prescale_mode = "width"
+        self._prescale_width = 1920
+        self._prescale_height = 1080
+        # Kernel state
+        self._kernel = "lanczos"
 
-        # Worker thread reference
+        # Worker thread references
         self._worker_thread: UpscaleWorkerThread | None = None
+        self._clipboard_worker: ClipboardWorkerThread | None = None
 
         # Create widgets
         self._create_widgets()
@@ -140,6 +150,12 @@ class MainWindow(QMainWindow):
         self._bf16_check.setChecked(True)
         self._tf32_check = QCheckBox("tf32")
 
+        # Sharpening widgets
+        self._sharpen_check = QCheckBox("Sharpen (CAS)")
+        self._sharpen_value_edit = QLineEdit("0.50")
+        self._sharpen_value_edit.setFixedWidth(50)
+        self._sharpen_value_edit.setEnabled(False)
+
         # Labels
         self._current_file_label = QLabel("Current file: (none)")
         self._progress_label = QLabel("Idle")
@@ -150,6 +166,8 @@ class MainWindow(QMainWindow):
         self._thumbnail_label = QLabel("(no thumbnail)")
         self._thumbnail_label.setAlignment(Qt.AlignCenter)
         self._thumbnail_label.setMinimumSize(QSize(200, 200))
+        self._image_info_label = QLabel("")
+        self._image_info_label.setAlignment(Qt.AlignCenter)
 
         # Buttons
         self._btn_in_file = QPushButton("Browse File")
@@ -160,6 +178,8 @@ class MainWindow(QMainWindow):
         self._start_button = QPushButton("Start")
         self._cancel_button = QPushButton("Cancel")
         self._cancel_button.setEnabled(False)
+        self._clipboard_button = QPushButton("To Clipboard")
+        self._clipboard_button.setToolTip("Upscale and copy result to clipboard (single image only)")
         self._custom_res_button = QPushButton("Custom resolution / secondary...")
 
     def _build_ui(self) -> None:
@@ -213,15 +233,30 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(tile_box, row, 0, 1, 4)
         row += 1
 
-        # Precision options
+        # Precision options and sharpening in one row
+        options_row = QHBoxLayout()
+
         prec_box = QGroupBox("vsmlrt Backend.TRT options")
         prec_layout = QHBoxLayout()
         prec_box.setLayout(prec_layout)
         prec_layout.addWidget(self._fp16_check)
         prec_layout.addWidget(self._bf16_check)
         prec_layout.addWidget(self._tf32_check)
-        prec_layout.addStretch()
-        main_layout.addWidget(prec_box, row, 0, 1, 4)
+        options_row.addWidget(prec_box)
+
+        sharpen_box = QGroupBox("Sharpening (post-upscale)")
+        sharpen_layout = QHBoxLayout()
+        sharpen_box.setLayout(sharpen_layout)
+        sharpen_layout.addWidget(self._sharpen_check)
+        sharpen_layout.addWidget(self._sharpen_value_edit)
+        sharpen_layout.addWidget(QLabel("(0-1)"))
+        options_row.addWidget(sharpen_box)
+
+        options_row.addStretch()
+
+        options_container = QWidget()
+        options_container.setLayout(options_row)
+        main_layout.addWidget(options_container, row, 0, 1, 4)
         row += 1
 
         # Same-dir + suffix
@@ -264,14 +299,16 @@ class MainWindow(QMainWindow):
         thumb_layout = QVBoxLayout()
         thumb_box.setLayout(thumb_layout)
         thumb_layout.addWidget(self._thumbnail_label)
+        thumb_layout.addWidget(self._image_info_label)
         main_layout.addWidget(thumb_box, 0, 4, row, 1)
 
-        # Buttons at bottom
+        # Buttons at bottom (Start=2/5, Cancel=2/5, To Clipboard=1/5)
         btn_layout = QHBoxLayout()
         btn_container = QWidget()
         btn_container.setLayout(btn_layout)
-        btn_layout.addWidget(self._start_button)
-        btn_layout.addWidget(self._cancel_button)
+        btn_layout.addWidget(self._start_button, 2)
+        btn_layout.addWidget(self._cancel_button, 2)
+        btn_layout.addWidget(self._clipboard_button, 1)
         main_layout.addWidget(btn_container, row, 0, 1, 5)
 
         self.resize(1150, 680)
@@ -285,7 +322,9 @@ class MainWindow(QMainWindow):
         self._btn_onnx.clicked.connect(self._browse_onnx_file)
         self._start_button.clicked.connect(self._on_start_clicked)
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
+        self._clipboard_button.clicked.connect(self._on_clipboard_clicked)
         self._custom_res_button.clicked.connect(self._open_custom_res_dialog)
+        self._sharpen_check.toggled.connect(self._on_sharpen_toggled)
 
     # ========== Settings Persistence ==========
 
@@ -323,6 +362,18 @@ class MainWindow(QMainWindow):
         self._secondary_width = config.secondary_width
         self._secondary_height = config.secondary_height
 
+        self._prescale_enabled = config.prescale_enabled
+        self._prescale_mode = config.prescale_mode
+        self._prescale_width = config.prescale_width
+        self._prescale_height = config.prescale_height
+
+        self._kernel = config.kernel
+
+        # Load sharpen settings into widgets
+        self._sharpen_check.setChecked(config.sharpen_enabled)
+        self._sharpen_value_edit.setText(f"{config.sharpen_value:.2f}")
+        self._sharpen_value_edit.setEnabled(config.sharpen_enabled)
+
     def _save_settings(self) -> None:
         """Save current settings to config file."""
         first_input = str(self._input_items[0]) if self._input_items else ""
@@ -349,8 +400,27 @@ class MainWindow(QMainWindow):
             secondary_mode=self._secondary_mode,
             secondary_width=self._secondary_width,
             secondary_height=self._secondary_height,
+            prescale_enabled=self._prescale_enabled,
+            prescale_mode=self._prescale_mode,
+            prescale_width=self._prescale_width,
+            prescale_height=self._prescale_height,
+            kernel=self._kernel,
+            sharpen_enabled=self._sharpen_check.isChecked(),
+            sharpen_value=self._get_sharpen_value(),
         )
         config.save()
+
+    def _on_sharpen_toggled(self, checked: bool) -> None:
+        """Handle sharpen checkbox toggle."""
+        self._sharpen_value_edit.setEnabled(checked)
+
+    def _get_sharpen_value(self) -> float:
+        """Get the current sharpen value from the text field."""
+        try:
+            value = float(self._sharpen_value_edit.text().strip())
+            return max(0.0, min(1.0, value))
+        except ValueError:
+            return 0.5
 
     def closeEvent(self, event) -> None:
         """Handle window close event."""
@@ -371,9 +441,9 @@ class MainWindow(QMainWindow):
     # ========== Drag & Drop ==========
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        """Accept drag events for images, URLs, and text."""
+        """Accept drag events for images, URLs, HTML, and text."""
         md = event.mimeData()
-        if md.hasImage() or md.hasUrls() or md.hasText():
+        if md.hasImage() or md.hasUrls() or md.hasHtml() or md.hasText():
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -382,7 +452,7 @@ class MainWindow(QMainWindow):
         """Handle dropped content."""
         md = event.mimeData()
 
-        # Raw image (e.g., from Discord)
+        # Raw image (e.g., from some applications)
         if md.hasImage():
             image = md.imageData()
             if isinstance(image, QImage) and not image.isNull():
@@ -415,14 +485,34 @@ class MainWindow(QMainWindow):
                 self._set_inputs_from_paths(paths, default_output_for_clipboard=True)
                 return
 
-        # Plain text URL
-        text = md.text().strip()
-        if text.lower().startswith(("http://", "https://")):
-            p = self._download_url_to_temp(text)
-            if p is not None:
-                self._set_inputs_from_paths([p], default_output_for_clipboard=True)
-        else:
-            event.ignore()
+        # Try to extract image URL from HTML content (Discord, etc.)
+        if md.hasHtml():
+            html = md.html()
+            img_url = self._extract_image_url_from_html(html)
+            if img_url:
+                p = self._download_url_to_temp(img_url)
+                if p is not None:
+                    self._set_inputs_from_paths([p], default_output_for_clipboard=True)
+                    return
+
+        # Plain text - could be URL or contain URL
+        text = md.text().strip() if md.hasText() else ""
+        if text:
+            # Check if it's a direct URL
+            if text.lower().startswith(("http://", "https://")):
+                p = self._download_url_to_temp(text)
+                if p is not None:
+                    self._set_inputs_from_paths([p], default_output_for_clipboard=True)
+                    return
+            # Try to find URL in text (Discord sometimes includes extra text)
+            url_match = re.search(r'https?://[^\s<>"]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff?)', text, re.IGNORECASE)
+            if url_match:
+                p = self._download_url_to_temp(url_match.group(0))
+                if p is not None:
+                    self._set_inputs_from_paths([p], default_output_for_clipboard=True)
+                    return
+
+        event.ignore()
 
     # ========== Clipboard ==========
 
@@ -469,8 +559,73 @@ class MainWindow(QMainWindow):
 
     # ========== URL Helper ==========
 
+    def _extract_image_url_from_html(self, html: str) -> str | None:
+        """
+        Extract an image URL from HTML content.
+
+        Discord and other sites often provide HTML with embedded image tags
+        when dragging images. This extracts the src attribute from img tags.
+
+        Args:
+            html: HTML content from drag-drop mimeData.
+
+        Returns:
+            Image URL string or None if not found.
+        """
+        # Common Discord CDN patterns
+        discord_patterns = [
+            r'https://cdn\.discordapp\.com/attachments/[^\s"\'<>]+',
+            r'https://media\.discordapp\.net/attachments/[^\s"\'<>]+',
+            r'https://cdn\.discordapp\.com/ephemeral-attachments/[^\s"\'<>]+',
+        ]
+
+        # Try Discord-specific patterns first
+        for pattern in discord_patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                url = match.group(0)
+                # Clean up any trailing characters that might have been captured
+                url = re.sub(r'["\'\s<>].*$', '', url)
+                return url
+
+        # Generic img src extraction
+        img_patterns = [
+            r'<img[^>]+src=["\']([^"\']+)["\']',
+            r'<img[^>]+src=([^\s>]+)',
+        ]
+
+        for pattern in img_patterns:
+            match = re.search(pattern, html, re.IGNORECASE)
+            if match:
+                url = match.group(1)
+                # Check if it looks like an image URL
+                if re.search(r'\.(png|jpg|jpeg|gif|webp|bmp|tiff?)(\?|$)', url, re.IGNORECASE):
+                    return url
+                # Discord CDN URLs may not have extensions
+                if 'discordapp' in url or 'discord' in url:
+                    return url
+
+        # Try to find any image URL in the HTML
+        general_img_pattern = r'https?://[^\s"\'<>]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff?)(?:\?[^\s"\'<>]*)?'
+        match = re.search(general_img_pattern, html, re.IGNORECASE)
+        if match:
+            return match.group(0)
+
+        return None
+
     def _download_url_to_temp(self, url: str) -> Path | None:
-        """Download a URL to the temporary input folder."""
+        """
+        Download a URL to the temporary input folder.
+
+        Uses proper headers to handle Discord CDN and other sites that
+        may block requests without a User-Agent.
+
+        Args:
+            url: The URL to download.
+
+        Returns:
+            Path to the downloaded file, or None on failure.
+        """
         url = url.strip()
         if not url:
             return None
@@ -479,7 +634,7 @@ class MainWindow(QMainWindow):
             parsed = urlparse(url)
             path = parsed.path or ""
             ext = os.path.splitext(path)[1]
-            valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+            valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".gif"}
             if ext.lower() not in valid_exts:
                 ext = ".png"
 
@@ -487,12 +642,29 @@ class MainWindow(QMainWindow):
 
             base_name = os.path.basename(path)
             if not base_name:
-                base_name = "dragdrop-image" + ext
+                base_name = f"dragdrop-image-{int(time.time()*1000)}" + ext
             elif not os.path.splitext(base_name)[1]:
                 base_name = base_name + ext
 
+            # Ensure unique filename to avoid collisions
             dest = GUI_INPUT_TMP_ROOT / base_name
-            urlretrieve(url, dest)
+            if dest.exists():
+                stem = dest.stem
+                dest = GUI_INPUT_TMP_ROOT / f"{stem}_{int(time.time()*1000)}{ext}"
+
+            # Use Request with headers for Discord CDN and other restrictive sites
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": f"{parsed.scheme}://{parsed.netloc}/",
+            }
+
+            req = Request(url, headers=headers)
+            with urlopen(req, timeout=30) as response:
+                with open(dest, "wb") as f:
+                    f.write(response.read())
+
             return dest
         except Exception as e:
             print(f"Drag-drop URL error: {e}")
@@ -541,6 +713,7 @@ class MainWindow(QMainWindow):
             elif p.is_dir():
                 self._thumbnail_label.setText("(folder)")
                 self._thumbnail_label.setPixmap(QPixmap())
+                self._image_info_label.setText("")
                 self._current_file_label.setText(f"Current folder: {p}")
         else:
             self._input_edit.setText(f"{len(unique)} items")
@@ -550,6 +723,7 @@ class MainWindow(QMainWindow):
             else:
                 self._thumbnail_label.setText("(multiple inputs)")
                 self._thumbnail_label.setPixmap(QPixmap())
+                self._image_info_label.setText("")
                 self._current_file_label.setText("Current file: (multiple inputs)")
 
         # Set default output
@@ -602,10 +776,13 @@ class MainWindow(QMainWindow):
 
     def _update_thumbnail(self, image_path: str) -> None:
         """Update the thumbnail preview."""
+        from pathlib import Path
+
         pix = QPixmap(image_path)
         if pix.isNull():
             self._thumbnail_label.setText("(Failed to load thumbnail)")
             self._thumbnail_label.setPixmap(QPixmap())
+            self._image_info_label.setText("")
             return
 
         scaled = pix.scaled(320, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -617,6 +794,16 @@ class MainWindow(QMainWindow):
         if not img.isNull():
             self._current_input_width = img.width()
             self._current_input_height = img.height()
+
+            # Update image info label with resolution and format
+            file_ext = Path(image_path).suffix.upper().lstrip(".")
+            if not file_ext:
+                file_ext = "Unknown"
+            self._image_info_label.setText(
+                f"{img.width()} × {img.height()} {file_ext}"
+            )
+        else:
+            self._image_info_label.setText("")
 
     # ========== Custom Resolution Dialog ==========
 
@@ -634,6 +821,11 @@ class MainWindow(QMainWindow):
             secondary_mode=self._secondary_mode,
             secondary_width=self._secondary_width,
             secondary_height=self._secondary_height,
+            prescale_enabled=self._prescale_enabled,
+            prescale_mode=self._prescale_mode,
+            prescale_width=self._prescale_width,
+            prescale_height=self._prescale_height,
+            kernel=self._kernel,
         )
         if dlg.exec() == QDialog.Accepted:
             settings = dlg.get_settings()
@@ -645,6 +837,11 @@ class MainWindow(QMainWindow):
             self._secondary_mode = settings.secondary_mode
             self._secondary_width = settings.secondary_width
             self._secondary_height = settings.secondary_height
+            self._prescale_enabled = settings.prescale_enabled
+            self._prescale_mode = settings.prescale_mode
+            self._prescale_width = settings.prescale_width
+            self._prescale_height = settings.prescale_height
+            self._kernel = settings.kernel
 
     # ========== Validation ==========
 
@@ -778,6 +975,7 @@ class MainWindow(QMainWindow):
         self._total_files_in_batch = len(files)
         self._completed_files_in_batch = 0
         self._current_avg_per_image = 0.0
+        self._current_image_start_time = 0.0
         self._batch_start_time = time.perf_counter()
 
         if self._elapsed_timer is None:
@@ -818,6 +1016,13 @@ class MainWindow(QMainWindow):
             use_tf32=self._tf32_check.isChecked(),
             use_alpha=self._alpha_check.isChecked(),
             append_model_suffix_enabled=self._append_model_suffix_check.isChecked(),
+            prescale_enabled=self._prescale_enabled,
+            prescale_mode=self._prescale_mode,
+            prescale_width=self._prescale_width,
+            prescale_height=self._prescale_height,
+            kernel=self._kernel,
+            sharpen_enabled=self._sharpen_check.isChecked(),
+            sharpen_value=self._get_sharpen_value(),
         )
         self._worker_thread.progress_signal.connect(self._on_progress_update)
         self._worker_thread.thumbnail_signal.connect(self._on_thumbnail_update)
@@ -830,18 +1035,128 @@ class MainWindow(QMainWindow):
             self._worker_thread.cancel()
             self._progress_label.setText("Cancelling after current image...")
 
+    def _on_clipboard_clicked(self) -> None:
+        """Handle clipboard button click - upscale single image and copy to clipboard."""
+        # Must have exactly one input file (not folder)
+        if not self._input_items:
+            QMessageBox.critical(self, "Error", "Please select an input image first.")
+            return
+
+        if len(self._input_items) != 1:
+            QMessageBox.critical(self, "Error", "Clipboard output only works with a single image.")
+            return
+
+        input_path = self._input_items[0]
+        if not input_path.is_file():
+            QMessageBox.critical(self, "Error", "Clipboard output requires a single file, not a folder.")
+            return
+
+        # Check extension
+        if input_path.suffix.lower() not in SUPPORTED_IMAGE_EXTENSIONS:
+            QMessageBox.critical(self, "Error", f"Unsupported image format: {input_path.suffix}")
+            return
+
+        # Validate ONNX
+        onnx_str = self._onnx_edit.text().strip()
+        if not onnx_str:
+            QMessageBox.critical(self, "Error", "Please select an ONNX model.")
+            return
+        if not Path(onnx_str).exists():
+            QMessageBox.critical(self, "Error", f"ONNX model does not exist:\n{onnx_str}")
+            return
+
+        # Validate tile sizes
+        tile_w = self._validate_tile_value(self._tile_w_combo.currentText(), "Tile W")
+        if tile_w is None:
+            return
+        tile_h = self._validate_tile_value(self._tile_h_combo.currentText(), "Tile H")
+        if tile_h is None:
+            return
+
+        model_scale = self._validate_model_scale(self._model_scale_combo.currentText())
+        if model_scale is None:
+            return
+
+        # Disable buttons during processing
+        self._start_button.setEnabled(False)
+        self._cancel_button.setEnabled(False)
+        self._clipboard_button.setEnabled(False)
+        self._progress_label.setText("Upscaling to clipboard...")
+        self._progress_bar.setValue(0)
+
+        # Launch clipboard worker
+        self._clipboard_worker = ClipboardWorkerThread(
+            input_file=input_path,
+            onnx_path=onnx_str,
+            tile_w=str(tile_w),
+            tile_h=str(tile_h),
+            model_scale=str(model_scale),
+            use_fp16=self._fp16_check.isChecked(),
+            use_bf16=self._bf16_check.isChecked(),
+            use_tf32=self._tf32_check.isChecked(),
+            use_alpha=self._alpha_check.isChecked(),
+            custom_res_enabled=self._custom_res_enabled,
+            custom_width=self._custom_res_width,
+            custom_height=self._custom_res_height,
+        )
+        self._clipboard_worker.status_signal.connect(self._on_clipboard_status)
+        self._clipboard_worker.result_signal.connect(self._on_clipboard_result)
+        self._clipboard_worker.start()
+
+    @Slot(str)
+    def _on_clipboard_status(self, status: str) -> None:
+        """Handle status update from clipboard worker."""
+        self._progress_label.setText(status)
+
+    @Slot(str)
+    def _on_clipboard_result(self, image_path: str) -> None:
+        """Handle clipboard worker completion - copy image to clipboard."""
+        self._start_button.setEnabled(True)
+        self._clipboard_button.setEnabled(True)
+        self._progress_bar.setValue(100)
+
+        if image_path:
+            # Load the image and copy to clipboard
+            image = QImage(image_path)
+            if not image.isNull():
+                clipboard = QGuiApplication.clipboard()
+                clipboard.setImage(image)
+                self._progress_label.setText("Image copied to clipboard!")
+            else:
+                self._progress_label.setText("Failed to load upscaled image.")
+        else:
+            self._progress_label.setText("Upscale failed.")
+
+        self._clipboard_worker = None
+
     def _update_time_display(self) -> None:
-        """Update elapsed time and ETA labels."""
+        """Update elapsed time and ETA labels with smooth countdown."""
         if self._batch_start_time <= 0 or self._total_files_in_batch <= 0:
             self._time_label.setText("Elapsed: 00:00:00 | ETA: --:--:--")
             return
 
-        elapsed = time.perf_counter() - self._batch_start_time
+        now = time.perf_counter()
+        elapsed = now - self._batch_start_time
         elapsed_str = format_time_hms(elapsed)
 
         if self._current_avg_per_image > 0:
-            remaining = max(self._total_files_in_batch - self._completed_files_in_batch, 0)
-            eta_sec = remaining * self._current_avg_per_image
+            # Calculate remaining full images after the current one
+            remaining_after_current = max(
+                self._total_files_in_batch - self._completed_files_in_batch - 1, 0
+            )
+
+            # Time for remaining full images
+            eta_remaining_images = remaining_after_current * self._current_avg_per_image
+
+            # Time remaining on current image (smooth countdown)
+            if self._current_image_start_time > 0:
+                time_on_current = now - self._current_image_start_time
+                eta_current_image = max(0, self._current_avg_per_image - time_on_current)
+            else:
+                # No current image started yet, use full average
+                eta_current_image = self._current_avg_per_image
+
+            eta_sec = eta_remaining_images + eta_current_image
             eta_str = format_time_hms(eta_sec)
         else:
             eta_str = "--:--:--"
@@ -854,6 +1169,13 @@ class MainWindow(QMainWindow):
         percent = int(100 * idx / total) if total > 0 else 0
         self._progress_bar.setValue(percent)
         self._progress_label.setText(f"Processed {idx}/{total} image(s)")
+
+        # Detect if a new image is starting (idx matches previous completed count)
+        # This happens when we receive the "before processing" signal
+        if idx == self._completed_files_in_batch and idx < total:
+            # New image starting - reset the current image timer
+            self._current_image_start_time = time.perf_counter()
+
         self._completed_files_in_batch = idx
         self._current_avg_per_image = avg
 

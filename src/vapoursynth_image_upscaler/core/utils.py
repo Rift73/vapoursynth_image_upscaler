@@ -230,6 +230,28 @@ def get_env_str(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def get_env_float(name: str, default: float) -> float:
+    """
+    Get a float value from an environment variable.
+
+    Args:
+        name: Name of the environment variable.
+        default: Default value if not set or invalid.
+
+    Returns:
+        The float value or the default.
+    """
+    import os
+
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 def compute_padding(width: int, height: int, alignment: int = 64) -> tuple[int, int, int, int]:
     """
     Compute symmetric padding to align dimensions to a multiple of alignment.

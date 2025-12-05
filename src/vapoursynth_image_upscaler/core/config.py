@@ -64,6 +64,19 @@ class Config:
     secondary_width: int = 1920
     secondary_height: int = 1080
 
+    # Pre-scaling settings (downscale before upscaling)
+    prescale_enabled: bool = False
+    prescale_mode: str = "width"  # "width", "height", or "2x"
+    prescale_width: int = 1920
+    prescale_height: int = 1080
+
+    # Kernel selection for scaling operations
+    kernel: str = "lanczos"  # "lanczos" or "hermite"
+
+    # Sharpening settings (CAS - Contrast Adaptive Sharpening)
+    sharpen_enabled: bool = False
+    sharpen_value: float = 0.5  # 0.0 to 1.0
+
     # Last used input path (for convenience on restart)
     input_path: str = ""
 
@@ -110,6 +123,16 @@ class Config:
                 config.secondary_width = _read_reg_int(key, "secondary_width", config.secondary_width)
                 config.secondary_height = _read_reg_int(key, "secondary_height", config.secondary_height)
 
+                config.prescale_enabled = _read_reg_bool(key, "prescale_enabled", config.prescale_enabled)
+                config.prescale_mode = _read_reg_str(key, "prescale_mode", config.prescale_mode)
+                config.prescale_width = _read_reg_int(key, "prescale_width", config.prescale_width)
+                config.prescale_height = _read_reg_int(key, "prescale_height", config.prescale_height)
+
+                config.kernel = _read_reg_str(key, "kernel", config.kernel)
+
+                config.sharpen_enabled = _read_reg_bool(key, "sharpen_enabled", config.sharpen_enabled)
+                config.sharpen_value = _read_reg_float(key, "sharpen_value", config.sharpen_value)
+
                 config.input_path = _read_reg_str(key, "input_path", config.input_path)
 
         except FileNotFoundError:
@@ -153,6 +176,16 @@ class Config:
                 _write_reg_int(key, "secondary_width", self.secondary_width)
                 _write_reg_int(key, "secondary_height", self.secondary_height)
 
+                _write_reg_bool(key, "prescale_enabled", self.prescale_enabled)
+                _write_reg_str(key, "prescale_mode", self.prescale_mode)
+                _write_reg_int(key, "prescale_width", self.prescale_width)
+                _write_reg_int(key, "prescale_height", self.prescale_height)
+
+                _write_reg_str(key, "kernel", self.kernel)
+
+                _write_reg_bool(key, "sharpen_enabled", self.sharpen_enabled)
+                _write_reg_float(key, "sharpen_value", self.sharpen_value)
+
                 _write_reg_str(key, "input_path", self.input_path)
 
         except OSError:
@@ -187,6 +220,15 @@ def _read_reg_bool(key, name: str, default: bool) -> bool:
         return default
 
 
+def _read_reg_float(key, name: str, default: float) -> float:
+    """Read a float value from the registry (stored as string)."""
+    try:
+        value, _ = winreg.QueryValueEx(key, name)
+        return float(value) if value is not None else default
+    except (FileNotFoundError, ValueError, TypeError):
+        return default
+
+
 def _write_reg_str(key, name: str, value: str) -> None:
     """Write a string value to the registry."""
     winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
@@ -200,6 +242,11 @@ def _write_reg_int(key, name: str, value: int) -> None:
 def _write_reg_bool(key, name: str, value: bool) -> None:
     """Write a boolean value to the registry (as DWORD 0/1)."""
     winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 1 if value else 0)
+
+
+def _write_reg_float(key, name: str, value: float) -> None:
+    """Write a float value to the registry (as string)."""
+    winreg.SetValueEx(key, name, 0, winreg.REG_SZ, str(value))
 
 
 def _parse_int(value: Any, default: int) -> int:

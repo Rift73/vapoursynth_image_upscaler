@@ -41,13 +41,10 @@ dependencies = [
 
 [project.optional-dependencies]
 worker = [
-    # These are typically installed via VapourSynth package managers
-    # Listed here for documentation purposes
-    # "vapoursynth",
-    # "vstools",
-    # "vskernels",
+    # VapourSynth dependencies
+    # vsjetpack includes vstools, vskernels, vssource and more
+    # "vsjetpack",
     # "vsmlrt",
-    # "vssource",
 ]
 rich = [
     "rich>=13.0.0",
@@ -120,6 +117,7 @@ show_error_codes = true
 [[tool.mypy.overrides]]
 module = [
     "vapoursynth.*",
+    "vsjetpack.*",
     "vstools.*",
     "vskernels.*",
     "vsmlrt.*",

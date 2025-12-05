@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vstools import vs, core, depth
-from vskernels import Hermite
+from vskernels import Hermite, Lanczos
 
 from ..core.constants import WORKER_TMP_ROOT
 from ..core.utils import write_time_file
@@ -26,6 +26,7 @@ from .pipeline import (
     build_clip,
     build_alpha_hq,
     apply_custom_resolution,
+    apply_sharpening,
     compute_secondary_dimensions,
     clear_cache,
     get_process_start_time,
@@ -85,7 +86,12 @@ def process_one(
 
         # Apply custom main resolution if enabled
         if settings.custom_res_enabled and settings.custom_width > 0 and settings.custom_height > 0:
-            clip_main = apply_custom_resolution(clip_main, settings.custom_width, settings.custom_height)
+            clip_main = apply_custom_resolution(
+                clip_main, settings.custom_width, settings.custom_height, settings.kernel
+            )
+
+        # Apply sharpening at the end of main output processing
+        clip_main = apply_sharpening(clip_main, settings)
 
         # Convert to RGB24 for output
         clip_main = core.resize.Point(clip_main, format=vs.RGB24)
@@ -248,7 +254,17 @@ def _process_secondary(
             settings.secondary_height,
         )
 
-        clip_sec = Hermite().scale(clip_sec, new_w, new_h, linear=True)
+        # Use selected kernel for scaling
+        if settings.kernel.lower() == "hermite":
+            kernel = Hermite()
+        else:
+            kernel = Lanczos()
+
+        clip_sec = kernel.scale(clip_sec, new_w, new_h, linear=True)
+
+        # Apply sharpening at the end of secondary output processing
+        clip_sec = apply_sharpening(clip_sec, settings)
+
         clip_sec = core.resize.Point(clip_sec, format=vs.RGB24)
 
         sec_sink = clip_sec.fpng.Write(

@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
 
-from ..core.constants import CREATE_NO_WINDOW
-from ..core.utils import read_time_file, cleanup_tmp_root, get_pythonw_executable
+from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE
+from ..core.utils import cleanup_tmp_root, get_pythonw_executable
 
 if TYPE_CHECKING:
     pass
@@ -61,6 +61,13 @@ class UpscaleWorkerThread(QThread):
         use_tf32: bool,
         use_alpha: bool,
         append_model_suffix_enabled: bool = False,
+        prescale_enabled: bool = False,
+        prescale_mode: str = "width",
+        prescale_width: int = 1920,
+        prescale_height: int = 1080,
+        kernel: str = "lanczos",
+        sharpen_enabled: bool = False,
+        sharpen_value: float = 0.5,
         parent=None,
     ):
         super().__init__(parent)
@@ -87,6 +94,13 @@ class UpscaleWorkerThread(QThread):
         self.use_tf32 = use_tf32
         self.use_alpha = use_alpha
         self.append_model_suffix_enabled = append_model_suffix_enabled
+        self.prescale_enabled = prescale_enabled
+        self.prescale_mode = prescale_mode
+        self.prescale_width = prescale_width
+        self.prescale_height = prescale_height
+        self.kernel = kernel
+        self.sharpen_enabled = sharpen_enabled
+        self.sharpen_value = sharpen_value
         self._cancel_flag = False
 
     def cancel(self) -> None:
@@ -101,14 +115,15 @@ class UpscaleWorkerThread(QThread):
         total_files = len(self.files)
         total_processing_time = 0.0
         num_timed = 0
+        current_avg = 0.0
 
         for idx, f in enumerate(self.files, start=1):
             if self._cancel_flag:
                 break
 
-            # Emit thumbnail and initial progress
+            # Emit thumbnail and initial progress (preserve current avg for ETA)
             self.thumbnail_signal.emit(str(f))
-            self.progress_signal.emit(idx - 1, total_files, 0.0, f.name, str(f))
+            self.progress_signal.emit(idx - 1, total_files, current_avg, f.name, str(f))
 
             # Determine per-file output directories
             per_output_dir, per_secondary_dir = self._compute_output_dirs(f)
@@ -128,18 +143,13 @@ class UpscaleWorkerThread(QThread):
             if self.use_alpha and not self._cancel_flag:
                 self._run_worker(script_path, "--alpha-worker", f, per_output_dir, per_secondary_dir, env)
 
-            # Read timing from worker
-            t = read_time_file(f.stem)
-            if t is not None:
-                total_processing_time += t
-                num_timed += 1
-            else:
-                elapsed = time.perf_counter() - file_start
-                total_processing_time += elapsed
-                num_timed += 1
+            # Use wall-clock time (includes subprocess overhead) for accurate ETA
+            file_elapsed = time.perf_counter() - file_start
+            total_processing_time += file_elapsed
+            num_timed += 1
 
-            avg_per_img = total_processing_time / num_timed if num_timed > 0 else 0.0
-            self.progress_signal.emit(idx, total_files, avg_per_img, f.name, str(f))
+            current_avg = total_processing_time / num_timed if num_timed > 0 else 0.0
+            self.progress_signal.emit(idx, total_files, current_avg, f.name, str(f))
 
         # Build summary
         if num_timed > 0:
@@ -215,6 +225,13 @@ class UpscaleWorkerThread(QThread):
         env["SECONDARY_HEIGHT"] = str(self.secondary_height)
         env["USE_ALPHA"] = "1" if self.use_alpha else "0"
         env["APPEND_MODEL_SUFFIX"] = "1" if self.append_model_suffix_enabled else "0"
+        env["PRESCALE_ENABLED"] = "1" if self.prescale_enabled else "0"
+        env["PRESCALE_MODE"] = self.prescale_mode
+        env["PRESCALE_WIDTH"] = str(self.prescale_width)
+        env["PRESCALE_HEIGHT"] = str(self.prescale_height)
+        env["KERNEL"] = self.kernel
+        env["SHARPEN_ENABLED"] = "1" if self.sharpen_enabled else "0"
+        env["SHARPEN_VALUE"] = str(self.sharpen_value)
         return env
 
     def _run_worker(
@@ -241,6 +258,161 @@ class UpscaleWorkerThread(QThread):
 
         # On Windows, use CREATE_NO_WINDOW flag as additional safeguard
         # Also redirect stdin/stdout/stderr to DEVNULL to prevent any console attachment
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            subprocess.run(
+                cmd,
+                check=False,
+                env=env,
+                creationflags=CREATE_NO_WINDOW,
+                startupinfo=startupinfo,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.run(cmd, check=False, env=env)
+
+
+class ClipboardWorkerThread(QThread):
+    """
+    QThread that upscales a single image and outputs the path for clipboard copy.
+
+    Outputs to a temporary file which the GUI then copies to clipboard.
+    """
+
+    # Signal: path to the upscaled image (or empty string on failure)
+    result_signal = Signal(str)
+
+    # Signal: status message
+    status_signal = Signal(str)
+
+    def __init__(
+        self,
+        input_file: Path,
+        onnx_path: str,
+        tile_w: str,
+        tile_h: str,
+        model_scale: str,
+        use_fp16: bool,
+        use_bf16: bool,
+        use_tf32: bool,
+        use_alpha: bool,
+        custom_res_enabled: bool = False,
+        custom_width: int = 0,
+        custom_height: int = 0,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.input_file = input_file
+        self.onnx_path = onnx_path
+        self.tile_w = tile_w
+        self.tile_h = tile_h
+        self.model_scale = model_scale
+        self.use_fp16 = use_fp16
+        self.use_bf16 = use_bf16
+        self.use_tf32 = use_tf32
+        self.use_alpha = use_alpha
+        self.custom_res_enabled = custom_res_enabled
+        self.custom_width = custom_width
+        self.custom_height = custom_height
+
+    def run(self) -> None:
+        """Run the upscale worker and emit the result path."""
+        script_path = self._get_script_path()
+
+        # Create a temporary output directory for clipboard result
+        clipboard_tmp_dir = TEMP_BASE / "vs_upscale_clipboard"
+        clipboard_tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        # Output file path (keep original extension)
+        output_file = clipboard_tmp_dir / f"clipboard_result{self.input_file.suffix}"
+
+        # Remove old result if exists
+        if output_file.exists():
+            try:
+                output_file.unlink()
+            except Exception:
+                pass
+
+        self.status_signal.emit("Upscaling image...")
+
+        env = self._build_worker_env()
+
+        # Run main worker
+        self._run_worker(script_path, "--worker", output_file.parent, env)
+
+        # Run alpha worker if enabled
+        if self.use_alpha:
+            self._run_worker(script_path, "--alpha-worker", output_file.parent, env)
+
+        # Check for output file
+        # The worker names output based on input stem, so look for it
+        expected_output = clipboard_tmp_dir / f"{self.input_file.stem}.png"
+        if not expected_output.exists():
+            # Try original extension
+            expected_output = clipboard_tmp_dir / f"{self.input_file.stem}{self.input_file.suffix}"
+
+        if expected_output.exists():
+            self.status_signal.emit("Image copied to clipboard!")
+            self.result_signal.emit(str(expected_output))
+        else:
+            self.status_signal.emit("Failed to upscale image.")
+            self.result_signal.emit("")
+
+    def _get_script_path(self) -> Path:
+        """Get the path to the main entry point script."""
+        main_module = sys.modules.get("__main__")
+        if main_module and hasattr(main_module, "__file__") and main_module.__file__:
+            return Path(main_module.__file__).resolve()
+        return Path(__file__).parent.parent / "__main__.py"
+
+    def _build_worker_env(self) -> dict[str, str]:
+        """Build environment variables for worker process."""
+        env = os.environ.copy()
+        env["ONNX_PATH"] = self.onnx_path
+        env["TILE_W_LIMIT"] = self.tile_w
+        env["TILE_H_LIMIT"] = self.tile_h
+        env["MODEL_SCALE"] = self.model_scale
+        env["USE_FP16"] = "1" if self.use_fp16 else "0"
+        env["USE_BF16"] = "1" if self.use_bf16 else "0"
+        env["USE_TF32"] = "1" if self.use_tf32 else "0"
+        env["USE_SAME_DIR_OUTPUT"] = "0"
+        env["SAME_DIR_SUFFIX"] = ""
+        env["OVERWRITE_OUTPUT"] = "1"  # Always overwrite for clipboard
+        env["CUSTOM_RES_ENABLED"] = "1" if self.custom_res_enabled else "0"
+        env["CUSTOM_WIDTH"] = str(self.custom_width)
+        env["CUSTOM_HEIGHT"] = str(self.custom_height)
+        env["USE_SECONDARY_OUTPUT"] = "0"  # No secondary for clipboard
+        env["SECONDARY_MODE"] = "width"
+        env["SECONDARY_WIDTH"] = "0"
+        env["SECONDARY_HEIGHT"] = "0"
+        env["USE_ALPHA"] = "1" if self.use_alpha else "0"
+        env["APPEND_MODEL_SUFFIX"] = "0"  # No suffix for clipboard
+        return env
+
+    def _run_worker(
+        self,
+        script_path: Path,
+        mode: str,
+        output_dir: Path,
+        env: dict[str, str],
+    ) -> None:
+        """Run a worker subprocess without creating a console window."""
+        python_exe = get_pythonw_executable()
+
+        cmd = [
+            python_exe,
+            str(script_path),
+            mode,
+            str(self.input_file),
+            str(output_dir),
+            str(output_dir),  # secondary_dir (unused)
+        ]
+
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW

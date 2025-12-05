@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..core.utils import get_env_int, get_env_bool, get_env_str
+from ..core.utils import get_env_int, get_env_bool, get_env_str, get_env_float
 from ..core.constants import (
     DEFAULT_ONNX_PATH,
     DEFAULT_TILE_WIDTH,
@@ -65,6 +65,19 @@ class WorkerSettings:
     # Append model suffix to output filename
     append_model_suffix: bool
 
+    # Pre-scaling settings (downscale before upscaling)
+    prescale_enabled: bool
+    prescale_mode: str  # "width", "height", or "2x"
+    prescale_width: int
+    prescale_height: int
+
+    # Kernel for scaling operations ("lanczos" or "hermite")
+    kernel: str
+
+    # Sharpening settings (CAS - Contrast Adaptive Sharpening)
+    sharpen_enabled: bool
+    sharpen_value: float  # 0.0 to 1.0
+
     @classmethod
     def from_environment(cls) -> WorkerSettings:
         """Create WorkerSettings by reading environment variables."""
@@ -96,6 +109,13 @@ class WorkerSettings:
             custom_height=get_env_int("CUSTOM_HEIGHT", 0),
             use_alpha=get_env_bool("USE_ALPHA", False),
             append_model_suffix=get_env_bool("APPEND_MODEL_SUFFIX", False),
+            prescale_enabled=get_env_bool("PRESCALE_ENABLED", False),
+            prescale_mode=get_env_str("PRESCALE_MODE", "width"),
+            prescale_width=get_env_int("PRESCALE_WIDTH", 1920),
+            prescale_height=get_env_int("PRESCALE_HEIGHT", 1080),
+            kernel=get_env_str("KERNEL", "lanczos"),
+            sharpen_enabled=get_env_bool("SHARPEN_ENABLED", False),
+            sharpen_value=get_env_float("SHARPEN_VALUE", 0.5),
         )
 
     def get_model_suffix(self) -> str:

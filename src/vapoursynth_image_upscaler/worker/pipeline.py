@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 import vsmlrt
 from vstools import vs, core, depth, initialize_clip, padder
 from vsmlrt import Backend
-from vskernels import Hermite
+from vskernels import Hermite, Lanczos
 from vssource import BestSource
 
 from ..core.utils import compute_padding
@@ -34,6 +34,14 @@ def get_process_start_time() -> float | None:
     return _process_start_time
 
 
+def _get_kernel(kernel_name: str):
+    """Get the appropriate scaling kernel based on name."""
+    if kernel_name.lower() == "hermite":
+        return Hermite()
+    else:
+        return Lanczos()
+
+
 def _build_backend(settings: WorkerSettings) -> Backend:
     """
     Build the vsmlrt TensorRT backend with configured settings.
@@ -50,6 +58,66 @@ def _build_backend(settings: WorkerSettings) -> Backend:
         opt_shapes=[settings.tile_w_limit, settings.tile_h_limit],
         max_shapes=[settings.tile_w_limit, settings.tile_h_limit],
     )
+
+
+def compute_prescale_dimensions(
+    source_width: int,
+    source_height: int,
+    mode: str,
+    target_width: int,
+    target_height: int,
+) -> tuple[int, int]:
+    """
+    Compute pre-scale dimensions based on mode.
+
+    Args:
+        source_width: Width of the source.
+        source_height: Height of the source.
+        mode: "width", "height", or "2x".
+        target_width: Target width for "width" mode.
+        target_height: Target height for "height" mode.
+
+    Returns:
+        Tuple of (width, height) for pre-scaled output.
+    """
+    if mode == "2x":
+        return max(1, int(source_width * 0.5 + 0.5)), max(1, int(source_height * 0.5 + 0.5))
+    elif mode == "height":
+        new_h = max(1, target_height)
+        new_w = max(1, int(source_width * new_h / source_height + 0.5))
+        return new_w, new_h
+    else:  # "width" or default
+        new_w = max(1, target_width)
+        new_h = max(1, int(source_height * new_w / source_width + 0.5))
+        return new_w, new_h
+
+
+def apply_prescale(clip: vs.VideoNode, settings: WorkerSettings) -> vs.VideoNode:
+    """
+    Apply pre-scaling to a clip before upscaling.
+
+    Args:
+        clip: Input clip (already in RGBS format).
+        settings: Worker settings with prescale configuration.
+
+    Returns:
+        Pre-scaled clip.
+    """
+    if not settings.prescale_enabled:
+        return clip
+
+    # Compute target dimensions
+    target_w, target_h = compute_prescale_dimensions(
+        clip.width, clip.height,
+        settings.prescale_mode,
+        settings.prescale_width,
+        settings.prescale_height,
+    )
+
+    # Apply scaling using selected kernel
+    kernel = _get_kernel(settings.kernel)
+    clip = depth(clip, 32)
+    return kernel.scale(clip, target_w, target_h, linear=True)
 
 
 def build_clip(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
@@ -80,6 +148,9 @@ def build_clip(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
 
     # Convert to RGBS (32-bit float RGB)
     clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in=0, range_in=1, range=1)
+
+    # Apply pre-scaling if enabled (before padding and upscaling)
+    clip = apply_prescale(clip, settings)
 
     # Compute and apply padding to multiple of 64
     pad_left, pad_right, pad_top, pad_bottom = compute_padding(
@@ -161,6 +232,9 @@ def build_alpha_hq(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
         range=1,
     )
 
+    # Apply pre-scaling if enabled (before padding and upscaling)
+    alpha = apply_prescale(alpha, settings)
+
     # Compute and apply padding
     pad_left, pad_right, pad_top, pad_bottom = compute_padding(
         alpha.width, alpha.height, PADDING_ALIGNMENT
@@ -204,20 +278,24 @@ def build_alpha_hq(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
     return alpha
 
 
-def apply_custom_resolution(clip: vs.VideoNode, width: int, height: int) -> vs.VideoNode:
+def apply_custom_resolution(
+    clip: vs.VideoNode, width: int, height: int, kernel_name: str = "lanczos"
+) -> vs.VideoNode:
     """
-    Downscale a clip to a custom resolution using Hermite scaling.
+    Downscale a clip to a custom resolution using the specified kernel.
 
     Args:
         clip: Input clip.
         width: Target width.
         height: Target height.
+        kernel_name: Kernel to use ("lanczos" or "hermite").
 
     Returns:
         Scaled clip.
     """
+    kernel = _get_kernel(kernel_name)
     clip = depth(clip, 32)
-    return Hermite().scale(clip, width, height, linear=True)
+    return kernel.scale(clip, width, height, linear=True)
 
 
 def compute_secondary_dimensions(
@@ -250,6 +328,22 @@ def compute_secondary_dimensions(
         new_w = max(1, target_width)
         new_h = max(1, int(source_height * new_w / source_width + 0.5))
         return new_w, new_h
+
+
+def apply_sharpening(clip: vs.VideoNode, settings: WorkerSettings) -> vs.VideoNode:
+    """
+    Apply CAS (Contrast Adaptive Sharpening) to a clip if enabled.
+
+    Args:
+        clip: Input clip in RGBS format.
+        settings: Worker settings with sharpening configuration.
+
+    Returns:
+        Sharpened clip if enabled, otherwise the original clip.
+    """
+    if settings.sharpen_enabled and settings.sharpen_value > 0:
+        return core.cas.CAS(clip, sharpness=settings.sharpen_value)
+    return clip
 
 
 def clear_cache() -> None:
