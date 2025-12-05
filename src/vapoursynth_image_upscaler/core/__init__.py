@@ -3,7 +3,6 @@
 from .constants import (
     SCRIPT_DIR,
     TEMP_BASE,
-    CONFIG_PATH,
     GUI_INPUT_TMP_ROOT,
     WORKER_TMP_ROOT,
     SUPPORTED_IMAGE_EXTENSIONS,
@@ -25,7 +24,6 @@ from .utils import (
 __all__ = [
     "SCRIPT_DIR",
     "TEMP_BASE",
-    "CONFIG_PATH",
     "GUI_INPUT_TMP_ROOT",
     "WORKER_TMP_ROOT",
     "SUPPORTED_IMAGE_EXTENSIONS",

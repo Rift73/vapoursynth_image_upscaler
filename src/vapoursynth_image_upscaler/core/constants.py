@@ -15,9 +15,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 TEMP_BASE = Path(tempfile.gettempdir())
 """System temporary directory."""
 
-CONFIG_PATH = SCRIPT_DIR / "vs_upscale_gui_config.json"
-"""Path to the configuration file."""
-
 GUI_INPUT_TMP_ROOT = TEMP_BASE / "vs_upscale_gui_inputs"
 """Temporary folder for drag-and-drop and clipboard images."""
 

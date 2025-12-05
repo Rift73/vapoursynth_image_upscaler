@@ -1,23 +1,29 @@
 """
 Configuration management for the VapourSynth Image Upscaler.
 
-Handles loading and saving of user settings to a JSON file.
+Handles loading and saving of user settings to the Windows Registry.
+Settings are stored under HKEY_CURRENT_USER\\Software\\VapourSynthImageUpscaler.
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
+import sys
+from dataclasses import dataclass
 from typing import Any
 
 from .constants import (
-    CONFIG_PATH,
     DEFAULT_ONNX_PATH,
     DEFAULT_TILE_WIDTH,
     DEFAULT_TILE_HEIGHT,
     DEFAULT_MODEL_SCALE,
 )
+
+# Windows Registry key path
+REGISTRY_KEY = r"Software\VapourSynthImageUpscaler"
+
+# Registry access (Windows only)
+if sys.platform == "win32":
+    import winreg
 
 
 @dataclass
@@ -25,7 +31,7 @@ class Config:
     """
     Application configuration dataclass.
 
-    All settings are stored here and can be loaded/saved to JSON.
+    All settings are stored here and can be loaded/saved to the Windows Registry.
     """
 
     # Model settings
@@ -62,83 +68,138 @@ class Config:
     input_path: str = ""
 
     @classmethod
-    def load(cls, path: Path | None = None) -> Config:
+    def load(cls) -> Config:
         """
-        Load configuration from a JSON file.
-
-        Args:
-            path: Path to the config file. Defaults to CONFIG_PATH.
+        Load configuration from the Windows Registry.
 
         Returns:
-            Loaded Config instance, or default Config if file doesn't exist.
+            Loaded Config instance, or default Config if registry key doesn't exist.
         """
-        config_path = path or CONFIG_PATH
-
-        if not config_path.exists():
+        if sys.platform != "win32":
             return cls()
 
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return cls._from_dict(data)
-        except (json.JSONDecodeError, OSError) as e:
-            print(f"Warning: Failed to load config from {config_path}: {e}")
-            return cls()
-
-    @classmethod
-    def _from_dict(cls, data: dict[str, Any]) -> Config:
-        """Create a Config from a dictionary, handling missing/extra keys."""
         config = cls()
 
-        # Model settings
-        config.onnx_path = str(data.get("onnx_path", config.onnx_path))
-        config.tile_w_limit = _parse_int(data.get("tile_w_limit"), config.tile_w_limit)
-        config.tile_h_limit = _parse_int(data.get("tile_h_limit"), config.tile_h_limit)
-        config.model_scale = _parse_model_scale(data.get("model_scale"), config.model_scale)
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
+                config.onnx_path = _read_reg_str(key, "onnx_path", config.onnx_path)
+                config.tile_w_limit = _read_reg_int(key, "tile_w_limit", config.tile_w_limit)
+                config.tile_h_limit = _read_reg_int(key, "tile_h_limit", config.tile_h_limit)
+                config.model_scale = _parse_model_scale(
+                    _read_reg_int(key, "model_scale", config.model_scale),
+                    config.model_scale
+                )
 
-        # Precision flags
-        config.use_fp16 = bool(data.get("use_fp16", config.use_fp16))
-        config.use_bf16 = bool(data.get("use_bf16", config.use_bf16))
-        config.use_tf32 = bool(data.get("use_tf32", config.use_tf32))
+                config.use_fp16 = _read_reg_bool(key, "use_fp16", config.use_fp16)
+                config.use_bf16 = _read_reg_bool(key, "use_bf16", config.use_bf16)
+                config.use_tf32 = _read_reg_bool(key, "use_tf32", config.use_tf32)
 
-        # Output options
-        config.same_dir = bool(data.get("same_dir", config.same_dir))
-        config.same_dir_suffix = str(data.get("same_dir_suffix", config.same_dir_suffix))
-        config.append_model_suffix = bool(data.get("append_model_suffix", config.append_model_suffix))
-        config.overwrite = bool(data.get("overwrite", config.overwrite))
-        config.use_alpha = bool(data.get("use_alpha", config.use_alpha))
+                config.same_dir = _read_reg_bool(key, "same_dir", config.same_dir)
+                config.same_dir_suffix = _read_reg_str(key, "same_dir_suffix", config.same_dir_suffix)
+                config.append_model_suffix = _read_reg_bool(key, "append_model_suffix", config.append_model_suffix)
+                config.overwrite = _read_reg_bool(key, "overwrite", config.overwrite)
+                config.use_alpha = _read_reg_bool(key, "use_alpha", config.use_alpha)
 
-        # Custom resolution
-        config.custom_res_enabled = bool(data.get("custom_res_enabled", config.custom_res_enabled))
-        config.custom_res_width = _parse_int(data.get("custom_res_width"), config.custom_res_width)
-        config.custom_res_height = _parse_int(data.get("custom_res_height"), config.custom_res_height)
-        config.custom_res_maintain_ar = bool(data.get("custom_res_maintain_ar", config.custom_res_maintain_ar))
+                config.custom_res_enabled = _read_reg_bool(key, "custom_res_enabled", config.custom_res_enabled)
+                config.custom_res_width = _read_reg_int(key, "custom_res_width", config.custom_res_width)
+                config.custom_res_height = _read_reg_int(key, "custom_res_height", config.custom_res_height)
+                config.custom_res_maintain_ar = _read_reg_bool(key, "custom_res_maintain_ar", config.custom_res_maintain_ar)
 
-        # Secondary output
-        config.secondary_enabled = bool(data.get("secondary_enabled", config.secondary_enabled))
-        config.secondary_mode = str(data.get("secondary_mode", config.secondary_mode))
-        config.secondary_width = _parse_int(data.get("secondary_width"), config.secondary_width)
-        config.secondary_height = _parse_int(data.get("secondary_height"), config.secondary_height)
+                config.secondary_enabled = _read_reg_bool(key, "secondary_enabled", config.secondary_enabled)
+                config.secondary_mode = _read_reg_str(key, "secondary_mode", config.secondary_mode)
+                config.secondary_width = _read_reg_int(key, "secondary_width", config.secondary_width)
+                config.secondary_height = _read_reg_int(key, "secondary_height", config.secondary_height)
 
-        # Last input
-        config.input_path = str(data.get("input_path", config.input_path))
+                config.input_path = _read_reg_str(key, "input_path", config.input_path)
+
+        except FileNotFoundError:
+            # Registry key doesn't exist yet, use defaults
+            pass
+        except OSError:
+            # Other registry errors, use defaults
+            pass
 
         return config
 
-    def save(self, path: Path | None = None) -> None:
-        """
-        Save configuration to a JSON file.
-
-        Args:
-            path: Path to the config file. Defaults to CONFIG_PATH.
-        """
-        config_path = path or CONFIG_PATH
+    def save(self) -> None:
+        """Save configuration to the Windows Registry."""
+        if sys.platform != "win32":
+            return
 
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(asdict(self), f, indent=2)
-        except OSError as e:
-            print(f"Warning: Failed to save config to {config_path}: {e}")
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
+                _write_reg_str(key, "onnx_path", self.onnx_path)
+                _write_reg_int(key, "tile_w_limit", self.tile_w_limit)
+                _write_reg_int(key, "tile_h_limit", self.tile_h_limit)
+                _write_reg_int(key, "model_scale", self.model_scale)
+
+                _write_reg_bool(key, "use_fp16", self.use_fp16)
+                _write_reg_bool(key, "use_bf16", self.use_bf16)
+                _write_reg_bool(key, "use_tf32", self.use_tf32)
+
+                _write_reg_bool(key, "same_dir", self.same_dir)
+                _write_reg_str(key, "same_dir_suffix", self.same_dir_suffix)
+                _write_reg_bool(key, "append_model_suffix", self.append_model_suffix)
+                _write_reg_bool(key, "overwrite", self.overwrite)
+                _write_reg_bool(key, "use_alpha", self.use_alpha)
+
+                _write_reg_bool(key, "custom_res_enabled", self.custom_res_enabled)
+                _write_reg_int(key, "custom_res_width", self.custom_res_width)
+                _write_reg_int(key, "custom_res_height", self.custom_res_height)
+                _write_reg_bool(key, "custom_res_maintain_ar", self.custom_res_maintain_ar)
+
+                _write_reg_bool(key, "secondary_enabled", self.secondary_enabled)
+                _write_reg_str(key, "secondary_mode", self.secondary_mode)
+                _write_reg_int(key, "secondary_width", self.secondary_width)
+                _write_reg_int(key, "secondary_height", self.secondary_height)
+
+                _write_reg_str(key, "input_path", self.input_path)
+
+        except OSError:
+            # Failed to write to registry, silently ignore
+            pass
+
+
+def _read_reg_str(key, name: str, default: str) -> str:
+    """Read a string value from the registry."""
+    try:
+        value, _ = winreg.QueryValueEx(key, name)
+        return str(value) if value is not None else default
+    except FileNotFoundError:
+        return default
+
+
+def _read_reg_int(key, name: str, default: int) -> int:
+    """Read an integer value from the registry."""
+    try:
+        value, _ = winreg.QueryValueEx(key, name)
+        return int(value) if value is not None else default
+    except (FileNotFoundError, ValueError, TypeError):
+        return default
+
+
+def _read_reg_bool(key, name: str, default: bool) -> bool:
+    """Read a boolean value from the registry (stored as DWORD 0/1)."""
+    try:
+        value, _ = winreg.QueryValueEx(key, name)
+        return bool(value)
+    except FileNotFoundError:
+        return default
+
+
+def _write_reg_str(key, name: str, value: str) -> None:
+    """Write a string value to the registry."""
+    winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+
+
+def _write_reg_int(key, name: str, value: int) -> None:
+    """Write an integer value to the registry."""
+    winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
+
+
+def _write_reg_bool(key, name: str, value: bool) -> None:
+    """Write a boolean value to the registry (as DWORD 0/1)."""
+    winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 1 if value else 0)
 
 
 def _parse_int(value: Any, default: int) -> int:

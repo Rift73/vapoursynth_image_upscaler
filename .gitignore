@@ -153,9 +153,6 @@ cython_debug/
 ehthumbs.db
 Thumbs.db
 
-# Application-specific
-vs_upscale_gui_config.json
-
 # TensorRT engine cache (can be large)
 *.engine
 *.trt
