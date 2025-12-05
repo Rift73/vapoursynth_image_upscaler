@@ -42,15 +42,20 @@ class UpscaleWorkerThread(QThread):
         output_dir: Path,
         secondary_output_dir: Path,
         single_input_is_file: bool,
+        input_roots: list[Path],
         custom_res_enabled: bool,
+        custom_res_mode: str,
         custom_width: int,
         custom_height: int,
+        custom_res_kernel: str,
         secondary_enabled: bool,
         secondary_mode: str,
         secondary_width: int,
         secondary_height: int,
+        secondary_kernel: str,
         same_dir_enabled: bool,
         same_dir_suffix: str,
+        manga_folder_enabled: bool,
         overwrite_enabled: bool,
         onnx_path: str,
         tile_w: str,
@@ -65,7 +70,7 @@ class UpscaleWorkerThread(QThread):
         prescale_mode: str = "width",
         prescale_width: int = 1920,
         prescale_height: int = 1080,
-        kernel: str = "lanczos",
+        prescale_kernel: str = "lanczos",
         sharpen_enabled: bool = False,
         sharpen_value: float = 0.5,
         parent=None,
@@ -75,15 +80,20 @@ class UpscaleWorkerThread(QThread):
         self.output_dir = output_dir
         self.secondary_output_dir = secondary_output_dir
         self.single_input_is_file = single_input_is_file
+        self.input_roots = input_roots
         self.custom_res_enabled = custom_res_enabled
+        self.custom_res_mode = custom_res_mode
         self.custom_width = custom_width
         self.custom_height = custom_height
+        self.custom_res_kernel = custom_res_kernel
         self.secondary_enabled = secondary_enabled
         self.secondary_mode = secondary_mode
         self.secondary_width = secondary_width
         self.secondary_height = secondary_height
+        self.secondary_kernel = secondary_kernel
         self.same_dir_enabled = same_dir_enabled
         self.same_dir_suffix = same_dir_suffix
+        self.manga_folder_enabled = manga_folder_enabled
         self.overwrite_enabled = overwrite_enabled
         self.onnx_path = onnx_path
         self.tile_w = tile_w
@@ -98,7 +108,7 @@ class UpscaleWorkerThread(QThread):
         self.prescale_mode = prescale_mode
         self.prescale_width = prescale_width
         self.prescale_height = prescale_height
-        self.kernel = kernel
+        self.prescale_kernel = prescale_kernel
         self.sharpen_enabled = sharpen_enabled
         self.sharpen_value = sharpen_value
         self._cancel_flag = False
@@ -186,7 +196,11 @@ class UpscaleWorkerThread(QThread):
 
     def _compute_output_dirs(self, f: Path) -> tuple[Path, Path]:
         """Compute output directories for a specific file."""
-        if self.same_dir_enabled:
+        if self.manga_folder_enabled:
+            # Manga folder mode: Parent Folder_suffix/Subfolder/.../
+            per_output_dir = self._compute_manga_output_dir(f)
+            per_secondary_dir = per_output_dir.parent / "secondary-resized" / per_output_dir.name
+        elif self.same_dir_enabled:
             per_output_dir = self.output_dir  # Placeholder; worker uses input.parent
             base_dir = f.parent if f.is_file() else f
             per_secondary_dir = base_dir / "secondary-resized"
@@ -201,10 +215,42 @@ class UpscaleWorkerThread(QThread):
 
         return per_output_dir, per_secondary_dir
 
+    def _compute_manga_output_dir(self, f: Path) -> Path:
+        """
+        Compute the manga folder output directory for a file.
+
+        Input:  Parent Folder/Subfolder/Subfolder/Image001.png
+        Output: Parent Folder_suffix/Subfolder/Subfolder/
+
+        The parent folder that gets the suffix is determined by finding which
+        input_root the file belongs to.
+        """
+        suffix = self.same_dir_suffix or "_upscaled"
+
+        # Find which input root this file belongs to
+        for root in self.input_roots:
+            if root.is_file():
+                # Single file input - use its parent with suffix
+                if f == root:
+                    return root.parent.parent / f"{root.parent.name}{suffix}"
+            else:
+                # Folder input - check if file is under this folder
+                try:
+                    rel_path = f.relative_to(root)
+                    # Output: root.parent / (root.name + suffix) / rel_path.parent
+                    manga_root = root.parent / f"{root.name}{suffix}"
+                    return manga_root / rel_path.parent
+                except ValueError:
+                    # File is not under this root
+                    continue
+
+        # Fallback: use file's grandparent with suffix
+        return f.parent.parent / f"{f.parent.name}{suffix}"
+
     def _ensure_dirs(self, output_dir: Path, secondary_dir: Path) -> None:
         """Ensure output directories exist."""
         try:
-            if not self.same_dir_enabled:
+            if self.manga_folder_enabled or not self.same_dir_enabled:
                 output_dir.mkdir(parents=True, exist_ok=True)
             if self.secondary_enabled:
                 secondary_dir.mkdir(parents=True, exist_ok=True)
@@ -223,21 +269,25 @@ class UpscaleWorkerThread(QThread):
         env["USE_TF32"] = "1" if self.use_tf32 else "0"
         env["USE_SAME_DIR_OUTPUT"] = "1" if self.same_dir_enabled else "0"
         env["SAME_DIR_SUFFIX"] = self.same_dir_suffix
+        env["MANGA_FOLDER_ENABLED"] = "1" if self.manga_folder_enabled else "0"
         env["OVERWRITE_OUTPUT"] = "1" if self.overwrite_enabled else "0"
         env["CUSTOM_RES_ENABLED"] = "1" if self.custom_res_enabled else "0"
+        env["CUSTOM_RES_MODE"] = self.custom_res_mode
         env["CUSTOM_WIDTH"] = str(self.custom_width)
         env["CUSTOM_HEIGHT"] = str(self.custom_height)
+        env["CUSTOM_RES_KERNEL"] = self.custom_res_kernel
         env["USE_SECONDARY_OUTPUT"] = "1" if self.secondary_enabled else "0"
         env["SECONDARY_MODE"] = self.secondary_mode
         env["SECONDARY_WIDTH"] = str(self.secondary_width)
         env["SECONDARY_HEIGHT"] = str(self.secondary_height)
+        env["SECONDARY_KERNEL"] = self.secondary_kernel
         env["USE_ALPHA"] = "1" if self.use_alpha else "0"
         env["APPEND_MODEL_SUFFIX"] = "1" if self.append_model_suffix_enabled else "0"
         env["PRESCALE_ENABLED"] = "1" if self.prescale_enabled else "0"
         env["PRESCALE_MODE"] = self.prescale_mode
         env["PRESCALE_WIDTH"] = str(self.prescale_width)
         env["PRESCALE_HEIGHT"] = str(self.prescale_height)
-        env["KERNEL"] = self.kernel
+        env["PRESCALE_KERNEL"] = self.prescale_kernel
         env["SHARPEN_ENABLED"] = "1" if self.sharpen_enabled else "0"
         env["SHARPEN_VALUE"] = str(self.sharpen_value)
         env["INPUT_EXTENSION"] = input_ext
@@ -322,13 +372,15 @@ class ClipboardWorkerThread(QThread):
         use_tf32: bool,
         use_alpha: bool,
         custom_res_enabled: bool = False,
+        custom_res_mode: str = "width",
         custom_width: int = 0,
         custom_height: int = 0,
+        custom_res_kernel: str = "lanczos",
         prescale_enabled: bool = False,
         prescale_mode: str = "width",
         prescale_width: int = 1920,
         prescale_height: int = 1080,
-        kernel: str = "lanczos",
+        prescale_kernel: str = "lanczos",
         sharpen_enabled: bool = False,
         sharpen_value: float = 0.5,
         parent=None,
@@ -344,13 +396,15 @@ class ClipboardWorkerThread(QThread):
         self.use_tf32 = use_tf32
         self.use_alpha = use_alpha
         self.custom_res_enabled = custom_res_enabled
+        self.custom_res_mode = custom_res_mode
         self.custom_width = custom_width
         self.custom_height = custom_height
+        self.custom_res_kernel = custom_res_kernel
         self.prescale_enabled = prescale_enabled
         self.prescale_mode = prescale_mode
         self.prescale_width = prescale_width
         self.prescale_height = prescale_height
-        self.kernel = kernel
+        self.prescale_kernel = prescale_kernel
         self.sharpen_enabled = sharpen_enabled
         self.sharpen_value = sharpen_value
 
@@ -418,19 +472,22 @@ class ClipboardWorkerThread(QThread):
         env["SAME_DIR_SUFFIX"] = ""
         env["OVERWRITE_OUTPUT"] = "1"  # Always overwrite for clipboard
         env["CUSTOM_RES_ENABLED"] = "1" if self.custom_res_enabled else "0"
+        env["CUSTOM_RES_MODE"] = self.custom_res_mode
         env["CUSTOM_WIDTH"] = str(self.custom_width)
         env["CUSTOM_HEIGHT"] = str(self.custom_height)
+        env["CUSTOM_RES_KERNEL"] = self.custom_res_kernel
         env["USE_SECONDARY_OUTPUT"] = "0"  # No secondary for clipboard
         env["SECONDARY_MODE"] = "width"
         env["SECONDARY_WIDTH"] = "0"
         env["SECONDARY_HEIGHT"] = "0"
+        env["SECONDARY_KERNEL"] = "lanczos"
         env["USE_ALPHA"] = "1" if self.use_alpha else "0"
         env["APPEND_MODEL_SUFFIX"] = "0"  # No suffix for clipboard
         env["PRESCALE_ENABLED"] = "1" if self.prescale_enabled else "0"
         env["PRESCALE_MODE"] = self.prescale_mode
         env["PRESCALE_WIDTH"] = str(self.prescale_width)
         env["PRESCALE_HEIGHT"] = str(self.prescale_height)
-        env["KERNEL"] = self.kernel
+        env["PRESCALE_KERNEL"] = self.prescale_kernel
         env["SHARPEN_ENABLED"] = "1" if self.sharpen_enabled else "0"
         env["SHARPEN_VALUE"] = str(self.sharpen_value)
         env["INPUT_EXTENSION"] = self.input_file.suffix.lower()

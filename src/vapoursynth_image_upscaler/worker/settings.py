@@ -46,18 +46,24 @@ class WorkerSettings:
     secondary_mode: str  # "width", "height", or "2x"
     secondary_width: int
     secondary_height: int
+    secondary_kernel: str  # "lanczos" or "hermite"
 
     # Same-directory output
     use_same_dir_output: bool
     same_dir_suffix: str
+
+    # Manga folder mode (Parent Folder_suffix/Subfolder/.../Image.png)
+    manga_folder_enabled: bool
 
     # Overwrite behavior
     overwrite_output: bool
 
     # Custom main resolution (downscaled from SR output)
     custom_res_enabled: bool
+    custom_res_mode: str  # "width", "height", or "2x"
     custom_width: int
     custom_height: int
+    custom_res_kernel: str  # "lanczos" or "hermite"
 
     # Alpha processing flag
     use_alpha: bool
@@ -70,9 +76,7 @@ class WorkerSettings:
     prescale_mode: str  # "width", "height", or "2x"
     prescale_width: int
     prescale_height: int
-
-    # Kernel for scaling operations ("lanczos" or "hermite")
-    kernel: str
+    prescale_kernel: str  # "lanczos" or "hermite"
 
     # Sharpening settings (CAS - Contrast Adaptive Sharpening)
     sharpen_enabled: bool
@@ -110,19 +114,23 @@ class WorkerSettings:
             secondary_mode=get_env_str("SECONDARY_MODE", "width"),
             secondary_width=get_env_int("SECONDARY_WIDTH", 1920),
             secondary_height=get_env_int("SECONDARY_HEIGHT", 1080),
+            secondary_kernel=get_env_str("SECONDARY_KERNEL", "lanczos"),
             use_same_dir_output=get_env_bool("USE_SAME_DIR_OUTPUT", False),
             same_dir_suffix=get_env_str("SAME_DIR_SUFFIX", "_upscaled"),
+            manga_folder_enabled=get_env_bool("MANGA_FOLDER_ENABLED", False),
             overwrite_output=get_env_bool("OVERWRITE_OUTPUT", True),
             custom_res_enabled=get_env_bool("CUSTOM_RES_ENABLED", False),
+            custom_res_mode=get_env_str("CUSTOM_RES_MODE", "width"),
             custom_width=get_env_int("CUSTOM_WIDTH", 0),
             custom_height=get_env_int("CUSTOM_HEIGHT", 0),
+            custom_res_kernel=get_env_str("CUSTOM_RES_KERNEL", "lanczos"),
             use_alpha=get_env_bool("USE_ALPHA", False),
             append_model_suffix=get_env_bool("APPEND_MODEL_SUFFIX", False),
             prescale_enabled=get_env_bool("PRESCALE_ENABLED", False),
             prescale_mode=get_env_str("PRESCALE_MODE", "width"),
             prescale_width=get_env_int("PRESCALE_WIDTH", 1920),
             prescale_height=get_env_int("PRESCALE_HEIGHT", 1080),
-            kernel=get_env_str("KERNEL", "lanczos"),
+            prescale_kernel=get_env_str("PRESCALE_KERNEL", "lanczos"),
             sharpen_enabled=get_env_bool("SHARPEN_ENABLED", False),
             sharpen_value=get_env_float("SHARPEN_VALUE", 0.5),
             input_extension=get_env_str("INPUT_EXTENSION", ".png"),

@@ -54,7 +54,7 @@ def _build_backend(settings: WorkerSettings) -> Backend:
         tf32=settings.use_tf32,
         static_shape=False,
         builder_optimization_level=5,
-        min_shapes=[128, 128],
+        min_shapes=[64, 64],
         opt_shapes=[settings.tile_w_limit, settings.tile_h_limit],
         max_shapes=[settings.tile_w_limit, settings.tile_h_limit],
     )
@@ -163,7 +163,7 @@ def build_alpha_from_arrays(
     # Resize to match target dimensions if specified (to match color output)
     if target_width > 0 and target_height > 0:
         if clip.width != target_width or clip.height != target_height:
-            kernel = _get_kernel(settings.kernel)
+            kernel = _get_kernel(settings.custom_res_kernel)
             clip = depth(clip, 32)
             clip = kernel.scale(clip, target_width, target_height, linear=True)
 
@@ -234,7 +234,7 @@ def apply_prescale(clip: vs.VideoNode, settings: WorkerSettings) -> vs.VideoNode
     )
 
     # Apply scaling using selected kernel
-    kernel = _get_kernel(settings.kernel)
+    kernel = _get_kernel(settings.prescale_kernel)
     clip = depth(clip, 32)
     return kernel.scale(clip, target_w, target_h, linear=True)
 
@@ -570,6 +570,38 @@ def build_alpha_hq_with_frame_selection(
     )
 
     return alpha
+
+
+def compute_custom_resolution_dimensions(
+    source_width: int,
+    source_height: int,
+    mode: str,
+    target_width: int,
+    target_height: int,
+) -> tuple[int, int]:
+    """
+    Compute custom resolution dimensions based on mode.
+
+    Args:
+        source_width: Width of the source (SR output).
+        source_height: Height of the source (SR output).
+        mode: "width", "height", or "2x".
+        target_width: Target width for "width" mode.
+        target_height: Target height for "height" mode.
+
+    Returns:
+        Tuple of (width, height) for custom resolution output.
+    """
+    if mode == "2x":
+        return max(1, int(source_width * 0.5 + 0.5)), max(1, int(source_height * 0.5 + 0.5))
+    elif mode == "height":
+        new_h = max(1, target_height)
+        new_w = max(1, int(source_width * new_h / source_height + 0.5))
+        return new_w, new_h
+    else:  # "width" or default
+        new_w = max(1, target_width)
+        new_h = max(1, int(source_height * new_w / source_width + 0.5))
+        return new_w, new_h
 
 
 def apply_custom_resolution(

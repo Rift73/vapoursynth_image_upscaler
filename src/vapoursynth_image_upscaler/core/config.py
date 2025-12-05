@@ -48,6 +48,7 @@ class Config:
     # Output options
     same_dir: bool = False
     same_dir_suffix: str = "_upscaled"
+    manga_folder: bool = False
     append_model_suffix: bool = False
     overwrite: bool = True
     use_alpha: bool = False
@@ -57,21 +58,22 @@ class Config:
     custom_res_width: int = 0
     custom_res_height: int = 0
     custom_res_maintain_ar: bool = True
+    custom_res_mode: str = "width"  # "width", "height", or "2x"
+    custom_res_kernel: str = "lanczos"  # "lanczos" or "hermite"
 
     # Secondary output settings
     secondary_enabled: bool = False
     secondary_mode: str = "width"  # "width", "height", or "2x"
     secondary_width: int = 1920
     secondary_height: int = 1080
+    secondary_kernel: str = "lanczos"  # "lanczos" or "hermite"
 
     # Pre-scaling settings (downscale before upscaling)
     prescale_enabled: bool = False
     prescale_mode: str = "width"  # "width", "height", or "2x"
     prescale_width: int = 1920
     prescale_height: int = 1080
-
-    # Kernel selection for scaling operations
-    kernel: str = "lanczos"  # "lanczos" or "hermite"
+    prescale_kernel: str = "lanczos"  # "lanczos" or "hermite"
 
     # Sharpening settings (CAS - Contrast Adaptive Sharpening)
     sharpen_enabled: bool = False
@@ -112,6 +114,7 @@ class Config:
 
                 config.same_dir = _read_reg_bool(key, "same_dir", config.same_dir)
                 config.same_dir_suffix = _read_reg_str(key, "same_dir_suffix", config.same_dir_suffix)
+                config.manga_folder = _read_reg_bool(key, "manga_folder", config.manga_folder)
                 config.append_model_suffix = _read_reg_bool(key, "append_model_suffix", config.append_model_suffix)
                 config.overwrite = _read_reg_bool(key, "overwrite", config.overwrite)
                 config.use_alpha = _read_reg_bool(key, "use_alpha", config.use_alpha)
@@ -120,18 +123,20 @@ class Config:
                 config.custom_res_width = _read_reg_int(key, "custom_res_width", config.custom_res_width)
                 config.custom_res_height = _read_reg_int(key, "custom_res_height", config.custom_res_height)
                 config.custom_res_maintain_ar = _read_reg_bool(key, "custom_res_maintain_ar", config.custom_res_maintain_ar)
+                config.custom_res_mode = _read_reg_str(key, "custom_res_mode", config.custom_res_mode)
+                config.custom_res_kernel = _read_reg_str(key, "custom_res_kernel", config.custom_res_kernel)
 
                 config.secondary_enabled = _read_reg_bool(key, "secondary_enabled", config.secondary_enabled)
                 config.secondary_mode = _read_reg_str(key, "secondary_mode", config.secondary_mode)
                 config.secondary_width = _read_reg_int(key, "secondary_width", config.secondary_width)
                 config.secondary_height = _read_reg_int(key, "secondary_height", config.secondary_height)
+                config.secondary_kernel = _read_reg_str(key, "secondary_kernel", config.secondary_kernel)
 
                 config.prescale_enabled = _read_reg_bool(key, "prescale_enabled", config.prescale_enabled)
                 config.prescale_mode = _read_reg_str(key, "prescale_mode", config.prescale_mode)
                 config.prescale_width = _read_reg_int(key, "prescale_width", config.prescale_width)
                 config.prescale_height = _read_reg_int(key, "prescale_height", config.prescale_height)
-
-                config.kernel = _read_reg_str(key, "kernel", config.kernel)
+                config.prescale_kernel = _read_reg_str(key, "prescale_kernel", config.prescale_kernel)
 
                 config.sharpen_enabled = _read_reg_bool(key, "sharpen_enabled", config.sharpen_enabled)
                 config.sharpen_value = _read_reg_float(key, "sharpen_value", config.sharpen_value)
@@ -166,6 +171,7 @@ class Config:
 
                 _write_reg_bool(key, "same_dir", self.same_dir)
                 _write_reg_str(key, "same_dir_suffix", self.same_dir_suffix)
+                _write_reg_bool(key, "manga_folder", self.manga_folder)
                 _write_reg_bool(key, "append_model_suffix", self.append_model_suffix)
                 _write_reg_bool(key, "overwrite", self.overwrite)
                 _write_reg_bool(key, "use_alpha", self.use_alpha)
@@ -174,18 +180,20 @@ class Config:
                 _write_reg_int(key, "custom_res_width", self.custom_res_width)
                 _write_reg_int(key, "custom_res_height", self.custom_res_height)
                 _write_reg_bool(key, "custom_res_maintain_ar", self.custom_res_maintain_ar)
+                _write_reg_str(key, "custom_res_mode", self.custom_res_mode)
+                _write_reg_str(key, "custom_res_kernel", self.custom_res_kernel)
 
                 _write_reg_bool(key, "secondary_enabled", self.secondary_enabled)
                 _write_reg_str(key, "secondary_mode", self.secondary_mode)
                 _write_reg_int(key, "secondary_width", self.secondary_width)
                 _write_reg_int(key, "secondary_height", self.secondary_height)
+                _write_reg_str(key, "secondary_kernel", self.secondary_kernel)
 
                 _write_reg_bool(key, "prescale_enabled", self.prescale_enabled)
                 _write_reg_str(key, "prescale_mode", self.prescale_mode)
                 _write_reg_int(key, "prescale_width", self.prescale_width)
                 _write_reg_int(key, "prescale_height", self.prescale_height)
-
-                _write_reg_str(key, "kernel", self.kernel)
+                _write_reg_str(key, "prescale_kernel", self.prescale_kernel)
 
                 _write_reg_bool(key, "sharpen_enabled", self.sharpen_enabled)
                 _write_reg_float(key, "sharpen_value", self.sharpen_value)

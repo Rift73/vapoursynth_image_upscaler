@@ -110,22 +110,25 @@ class MainWindow(QMainWindow):
         self._current_avg_per_image: float = 0.0
         self._current_image_start_time: float = 0.0  # When current image started
 
-        # Custom resolution / secondary state
+        # Custom resolution state
         self._custom_res_enabled = False
         self._custom_res_width = 0
         self._custom_res_height = 0
         self._custom_res_maintain_ar = True
+        self._custom_res_mode = "width"
+        self._custom_res_kernel = "lanczos"
+        # Secondary output state
         self._secondary_enabled = False
         self._secondary_mode = "width"
         self._secondary_width = 1920
         self._secondary_height = 1080
+        self._secondary_kernel = "lanczos"
         # Pre-scaling state
         self._prescale_enabled = False
         self._prescale_mode = "width"
         self._prescale_width = 1920
         self._prescale_height = 1080
-        # Kernel state
-        self._kernel = "lanczos"
+        self._prescale_kernel = "lanczos"
 
         # Model scale (auto-detected from ONNX filename or user-selected)
         self._model_scale: int = 4
@@ -173,10 +176,12 @@ class MainWindow(QMainWindow):
         # Checkboxes
         self._same_dir_check = QCheckBox("Save next to input with suffix:")
         self._same_dir_suffix_edit = QLineEdit("_upscaled")
+        self._manga_folder_check = QCheckBox("Manga folder")
+        self._manga_folder_check.setToolTip("Output: ParentFolder_suffix/Subfolder/.../Image.png")
         self._append_model_suffix_check = QCheckBox("Append model suffix")
         self._overwrite_check = QCheckBox("Overwrite")
         self._overwrite_check.setChecked(True)
-        self._alpha_check = QCheckBox("Use alpha for transparent formats (PNG/GIF/WEBP)")
+        self._alpha_check = QCheckBox("Transparency")
 
         # Precision checkboxes
         self._fp16_check = QCheckBox("fp16")
@@ -185,7 +190,7 @@ class MainWindow(QMainWindow):
         self._tf32_check = QCheckBox("tf32")
 
         # Sharpening widgets
-        self._sharpen_check = QCheckBox("Sharpen (CAS)")
+        self._sharpen_check = QCheckBox("Sharpen")
         self._sharpen_value_edit = QLineEdit("0.50")
         self._sharpen_value_edit.setFixedWidth(50)
         self._sharpen_value_edit.setEnabled(False)
@@ -214,7 +219,7 @@ class MainWindow(QMainWindow):
         self._cancel_button.setEnabled(False)
         self._clipboard_button = QPushButton("To Clipboard")
         self._clipboard_button.setToolTip("Upscale and copy result to clipboard (single image only)")
-        self._custom_res_button = QPushButton("Custom resolution / secondary...")
+        self._custom_res_button = QPushButton("Resolution")
 
     def _build_ui(self) -> None:
         """Build the main UI layout."""
@@ -254,13 +259,13 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._btn_onnx, row, 2)
         row += 1
 
-        # Tile / shape group
-        tile_box = QGroupBox("SR tile / shape")
+        # Tile group
+        tile_box = QGroupBox("Tile")
         tile_layout = QHBoxLayout()
         tile_box.setLayout(tile_layout)
-        tile_layout.addWidget(QLabel("Tile / Shape W:"))
+        tile_layout.addWidget(QLabel("Width:"))
         tile_layout.addWidget(self._tile_w_combo)
-        tile_layout.addWidget(QLabel("Tile / Shape H:"))
+        tile_layout.addWidget(QLabel("Height:"))
         tile_layout.addWidget(self._tile_h_combo)
         main_layout.addWidget(tile_box, row, 0, 1, 4)
         row += 1
@@ -268,7 +273,7 @@ class MainWindow(QMainWindow):
         # Precision options and sharpening in one row
         options_row = QHBoxLayout()
 
-        prec_box = QGroupBox("vsmlrt Backend.TRT options")
+        prec_box = QGroupBox("vsmlrt")
         prec_layout = QHBoxLayout()
         prec_box.setLayout(prec_layout)
         prec_layout.addWidget(self._fp16_check)
@@ -276,7 +281,7 @@ class MainWindow(QMainWindow):
         prec_layout.addWidget(self._tf32_check)
         options_row.addWidget(prec_box)
 
-        sharpen_box = QGroupBox("Sharpening (post-upscale)")
+        sharpen_box = QGroupBox("Sharpen")
         sharpen_layout = QHBoxLayout()
         sharpen_box.setLayout(sharpen_layout)
         sharpen_layout.addWidget(self._sharpen_check)
@@ -291,13 +296,13 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(options_container, row, 0, 1, 4)
         row += 1
 
-        # Same-dir + suffix
+        # Same-dir + suffix + manga folder
         same_dir_layout = QHBoxLayout()
         same_dir_container = QWidget()
         same_dir_container.setLayout(same_dir_layout)
         same_dir_layout.addWidget(self._same_dir_check)
         same_dir_layout.addWidget(self._same_dir_suffix_edit)
-        same_dir_layout.addWidget(QLabel("(empty = same name)"))
+        same_dir_layout.addWidget(self._manga_folder_check)
         same_dir_layout.addStretch()
         main_layout.addWidget(same_dir_container, row, 0, 1, 4)
         row += 1
@@ -357,6 +362,7 @@ class MainWindow(QMainWindow):
         self._clipboard_button.clicked.connect(self._on_clipboard_clicked)
         self._custom_res_button.clicked.connect(self._open_custom_res_dialog)
         self._sharpen_check.toggled.connect(self._on_sharpen_toggled)
+        self._manga_folder_check.toggled.connect(self._on_manga_folder_toggled)
 
     # ========== Settings Persistence ==========
 
@@ -377,6 +383,10 @@ class MainWindow(QMainWindow):
 
         self._same_dir_check.setChecked(config.same_dir)
         self._same_dir_suffix_edit.setText(config.same_dir_suffix)
+        self._manga_folder_check.setChecked(config.manga_folder)
+        # Apply manga folder toggle effect on load
+        if config.manga_folder:
+            self._same_dir_check.setEnabled(False)
         self._overwrite_check.setChecked(config.overwrite)
         self._alpha_check.setChecked(config.use_alpha)
         self._append_model_suffix_check.setChecked(config.append_model_suffix)
@@ -394,18 +404,20 @@ class MainWindow(QMainWindow):
         self._custom_res_width = config.custom_res_width
         self._custom_res_height = config.custom_res_height
         self._custom_res_maintain_ar = config.custom_res_maintain_ar
+        self._custom_res_mode = config.custom_res_mode
+        self._custom_res_kernel = config.custom_res_kernel
 
         self._secondary_enabled = config.secondary_enabled
         self._secondary_mode = config.secondary_mode
         self._secondary_width = config.secondary_width
         self._secondary_height = config.secondary_height
+        self._secondary_kernel = config.secondary_kernel
 
         self._prescale_enabled = config.prescale_enabled
         self._prescale_mode = config.prescale_mode
         self._prescale_width = config.prescale_width
         self._prescale_height = config.prescale_height
-
-        self._kernel = config.kernel
+        self._prescale_kernel = config.prescale_kernel
 
         # Load sharpen settings into widgets
         self._sharpen_check.setChecked(config.sharpen_enabled)
@@ -423,6 +435,7 @@ class MainWindow(QMainWindow):
             model_scale=self._model_scale,
             same_dir=self._same_dir_check.isChecked(),
             same_dir_suffix=self._same_dir_suffix_edit.text(),
+            manga_folder=self._manga_folder_check.isChecked(),
             append_model_suffix=self._append_model_suffix_check.isChecked(),
             overwrite=self._overwrite_check.isChecked(),
             use_alpha=self._alpha_check.isChecked(),
@@ -434,15 +447,18 @@ class MainWindow(QMainWindow):
             custom_res_width=self._custom_res_width,
             custom_res_height=self._custom_res_height,
             custom_res_maintain_ar=self._custom_res_maintain_ar,
+            custom_res_mode=self._custom_res_mode,
+            custom_res_kernel=self._custom_res_kernel,
             secondary_enabled=self._secondary_enabled,
             secondary_mode=self._secondary_mode,
             secondary_width=self._secondary_width,
             secondary_height=self._secondary_height,
+            secondary_kernel=self._secondary_kernel,
             prescale_enabled=self._prescale_enabled,
             prescale_mode=self._prescale_mode,
             prescale_width=self._prescale_width,
             prescale_height=self._prescale_height,
-            kernel=self._kernel,
+            prescale_kernel=self._prescale_kernel,
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
         )
@@ -451,6 +467,14 @@ class MainWindow(QMainWindow):
     def _on_sharpen_toggled(self, checked: bool) -> None:
         """Handle sharpen checkbox toggle."""
         self._sharpen_value_edit.setEnabled(checked)
+
+    def _on_manga_folder_toggled(self, checked: bool) -> None:
+        """Handle manga folder checkbox toggle - disables same_dir when enabled."""
+        if checked:
+            self._same_dir_check.setChecked(False)
+            self._same_dir_check.setEnabled(False)
+        else:
+            self._same_dir_check.setEnabled(True)
 
     def _get_sharpen_value(self) -> float:
         """Get the current sharpen value from the text field."""
@@ -979,15 +1003,18 @@ class MainWindow(QMainWindow):
             custom_width=self._custom_res_width,
             custom_height=self._custom_res_height,
             maintain_ar=self._custom_res_maintain_ar,
+            custom_mode=self._custom_res_mode,
+            custom_kernel=self._custom_res_kernel,
             secondary_enabled=self._secondary_enabled,
             secondary_mode=self._secondary_mode,
             secondary_width=self._secondary_width,
             secondary_height=self._secondary_height,
+            secondary_kernel=self._secondary_kernel,
             prescale_enabled=self._prescale_enabled,
             prescale_mode=self._prescale_mode,
             prescale_width=self._prescale_width,
             prescale_height=self._prescale_height,
-            kernel=self._kernel,
+            prescale_kernel=self._prescale_kernel,
         )
         if dlg.exec() == QDialog.Accepted:
             settings = dlg.get_settings()
@@ -995,15 +1022,18 @@ class MainWindow(QMainWindow):
             self._custom_res_width = settings.custom_width
             self._custom_res_height = settings.custom_height
             self._custom_res_maintain_ar = settings.maintain_ar
+            self._custom_res_mode = settings.custom_mode
+            self._custom_res_kernel = settings.custom_kernel
             self._secondary_enabled = settings.secondary_enabled
             self._secondary_mode = settings.secondary_mode
             self._secondary_width = settings.secondary_width
             self._secondary_height = settings.secondary_height
+            self._secondary_kernel = settings.secondary_kernel
             self._prescale_enabled = settings.prescale_enabled
             self._prescale_mode = settings.prescale_mode
             self._prescale_width = settings.prescale_width
             self._prescale_height = settings.prescale_height
-            self._kernel = settings.kernel
+            self._prescale_kernel = settings.prescale_kernel
 
     # ========== Validation ==========
 
@@ -1146,15 +1176,20 @@ class MainWindow(QMainWindow):
             output_dir=output_dir,
             secondary_output_dir=secondary_output_dir,
             single_input_is_file=single_input_is_file,
+            input_roots=list(self._input_items),
             custom_res_enabled=self._custom_res_enabled,
+            custom_res_mode=self._custom_res_mode,
             custom_width=self._custom_res_width,
             custom_height=self._custom_res_height,
+            custom_res_kernel=self._custom_res_kernel,
             secondary_enabled=self._secondary_enabled,
             secondary_mode=self._secondary_mode,
             secondary_width=self._secondary_width,
             secondary_height=self._secondary_height,
+            secondary_kernel=self._secondary_kernel,
             same_dir_enabled=self._same_dir_check.isChecked(),
             same_dir_suffix=self._same_dir_suffix_edit.text(),
+            manga_folder_enabled=self._manga_folder_check.isChecked(),
             overwrite_enabled=self._overwrite_check.isChecked(),
             onnx_path=onnx_str,
             tile_w=str(tile_w),
@@ -1169,7 +1204,7 @@ class MainWindow(QMainWindow):
             prescale_mode=self._prescale_mode,
             prescale_width=self._prescale_width,
             prescale_height=self._prescale_height,
-            kernel=self._kernel,
+            prescale_kernel=self._prescale_kernel,
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
         )
@@ -1244,13 +1279,15 @@ class MainWindow(QMainWindow):
             use_tf32=self._tf32_check.isChecked(),
             use_alpha=self._alpha_check.isChecked(),
             custom_res_enabled=self._custom_res_enabled,
+            custom_res_mode=self._custom_res_mode,
             custom_width=self._custom_res_width,
             custom_height=self._custom_res_height,
+            custom_res_kernel=self._custom_res_kernel,
             prescale_enabled=self._prescale_enabled,
             prescale_mode=self._prescale_mode,
             prescale_width=self._prescale_width,
             prescale_height=self._prescale_height,
-            kernel=self._kernel,
+            prescale_kernel=self._prescale_kernel,
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
         )

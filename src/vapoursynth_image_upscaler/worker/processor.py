@@ -37,6 +37,7 @@ from .pipeline import (
     build_alpha_from_arrays,
     apply_custom_resolution,
     apply_sharpening,
+    compute_custom_resolution_dimensions,
     compute_secondary_dimensions,
     clear_cache,
     get_process_start_time,
@@ -599,7 +600,11 @@ def process_one(
     # Compute destination paths
     model_suffix = settings.get_model_suffix()
 
-    if settings.use_same_dir_output:
+    if settings.manga_folder_enabled:
+        # Manga folder mode: suffix is in the parent folder name, not the file
+        dest_stem = f"{base_name}{model_suffix}"
+        dest_dir_main = output_dir
+    elif settings.use_same_dir_output:
         suffix = settings.same_dir_suffix or ""
         dest_stem = f"{base_name}{suffix}{model_suffix}"
         dest_dir_main = input_path.parent
@@ -672,10 +677,17 @@ def process_one(
         clip_main = clip_sr
 
         # Apply custom main resolution if enabled
-        if settings.custom_res_enabled and settings.custom_width > 0 and settings.custom_height > 0:
-            clip_main = apply_custom_resolution(
-                clip_main, settings.custom_width, settings.custom_height, settings.kernel
+        if settings.custom_res_enabled:
+            custom_w, custom_h = compute_custom_resolution_dimensions(
+                clip_main.width, clip_main.height,
+                settings.custom_res_mode,
+                settings.custom_width,
+                settings.custom_height,
             )
+            if custom_w > 0 and custom_h > 0:
+                clip_main = apply_custom_resolution(
+                    clip_main, custom_w, custom_h, settings.custom_res_kernel
+                )
 
         # Apply sharpening at the end of main output processing
         clip_main = apply_sharpening(clip_main, settings)
@@ -746,7 +758,7 @@ def process_one(
                 _process_secondary(tmp_main, tmp_secondary, settings, imgformat, file_ext)
 
         # Ensure destination directories exist
-        if not settings.use_same_dir_output:
+        if settings.manga_folder_enabled or not settings.use_same_dir_output:
             dest_dir_main.mkdir(parents=True, exist_ok=True)
         if settings.use_secondary_output:
             dest_dir_secondary.mkdir(parents=True, exist_ok=True)
@@ -838,7 +850,11 @@ def process_one_alpha(
     # Resolve main destination path (same logic as main worker)
     model_suffix = settings.get_model_suffix()
 
-    if settings.use_same_dir_output:
+    if settings.manga_folder_enabled:
+        # Manga folder mode: suffix is in the parent folder name, not the file
+        dest_stem = f"{base_name}{model_suffix}"
+        dest_dir_main = output_dir
+    elif settings.use_same_dir_output:
         suffix = settings.same_dir_suffix or ""
         dest_stem = f"{base_name}{suffix}{model_suffix}"
         dest_dir_main = input_path.parent
@@ -918,7 +934,7 @@ def _process_secondary(
         )
 
         # Use selected kernel for scaling
-        if settings.kernel.lower() == "hermite":
+        if settings.secondary_kernel.lower() == "hermite":
             kernel = Hermite()
         else:
             kernel = Lanczos()
