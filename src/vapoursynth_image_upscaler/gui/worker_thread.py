@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
 
-from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE
-from ..core.utils import cleanup_tmp_root, get_pythonw_executable
+from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS
+from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps
 
 if TYPE_CHECKING:
     pass
@@ -131,8 +131,16 @@ class UpscaleWorkerThread(QThread):
             # Ensure directories exist
             self._ensure_dirs(per_output_dir, per_secondary_dir)
 
+            # Get input file info for format detection
+            input_ext = f.suffix.lower()
+            input_duration = 0.0
+            input_fps = 0.0
+            if input_ext in SUPPORTED_VIDEO_EXTENSIONS or input_ext == ".gif":
+                input_duration = get_video_duration(f)
+                input_fps = get_video_fps(f)
+
             # Build environment for worker
-            env = self._build_worker_env()
+            env = self._build_worker_env(input_ext, input_duration, input_fps)
 
             file_start = time.perf_counter()
 
@@ -203,7 +211,7 @@ class UpscaleWorkerThread(QThread):
         except Exception as e:
             print(f"Warning: Failed to create per-file dirs: {e}")
 
-    def _build_worker_env(self) -> dict[str, str]:
+    def _build_worker_env(self, input_ext: str = ".png", input_duration: float = 0.0, input_fps: float = 0.0) -> dict[str, str]:
         """Build environment variables for worker process."""
         env = os.environ.copy()
         env["ONNX_PATH"] = self.onnx_path
@@ -232,6 +240,9 @@ class UpscaleWorkerThread(QThread):
         env["KERNEL"] = self.kernel
         env["SHARPEN_ENABLED"] = "1" if self.sharpen_enabled else "0"
         env["SHARPEN_VALUE"] = str(self.sharpen_value)
+        env["INPUT_EXTENSION"] = input_ext
+        env["INPUT_DURATION"] = str(input_duration)
+        env["INPUT_FPS"] = str(input_fps)
         return env
 
     def _run_worker(

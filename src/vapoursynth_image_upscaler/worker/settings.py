@@ -78,6 +78,15 @@ class WorkerSettings:
     sharpen_enabled: bool
     sharpen_value: float  # 0.0 to 1.0
 
+    # Input file extension (for output format detection)
+    input_extension: str  # e.g., ".png", ".gif", ".mp4"
+
+    # Input video duration in seconds (for GIF output decision)
+    input_duration: float  # 0.0 for images
+
+    # Input frame rate (for animated GIF output)
+    input_fps: float  # frames per second, 0.0 for images
+
     @classmethod
     def from_environment(cls) -> WorkerSettings:
         """Create WorkerSettings by reading environment variables."""
@@ -116,6 +125,9 @@ class WorkerSettings:
             kernel=get_env_str("KERNEL", "lanczos"),
             sharpen_enabled=get_env_bool("SHARPEN_ENABLED", False),
             sharpen_value=get_env_float("SHARPEN_VALUE", 0.5),
+            input_extension=get_env_str("INPUT_EXTENSION", ".png"),
+            input_duration=get_env_float("INPUT_DURATION", 0.0),
+            input_fps=get_env_float("INPUT_FPS", 0.0),
         )
 
     def get_model_suffix(self) -> str:

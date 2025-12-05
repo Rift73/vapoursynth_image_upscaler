@@ -30,10 +30,19 @@ SUPPORTED_IMAGE_EXTENSIONS: frozenset[str] = frozenset({
 })
 """Set of supported image file extensions (lowercase, with dot)."""
 
+SUPPORTED_VIDEO_EXTENSIONS: frozenset[str] = frozenset({
+    ".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv", ".m4v"
+})
+"""Set of supported video file extensions (lowercase, with dot)."""
+
 ALPHA_SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({
     ".png", ".gif", ".webp"
 })
 """Set of file extensions that support alpha channel."""
+
+# Maximum video duration (in seconds) for GIF output
+MAX_VIDEO_DURATION_FOR_GIF: float = 300.0  # 5 minutes
+"""Maximum video duration in seconds for automatic GIF output."""
 
 # ============================================================================
 # Model Configuration

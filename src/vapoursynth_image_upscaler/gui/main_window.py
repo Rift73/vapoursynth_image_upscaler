@@ -48,6 +48,39 @@ if TYPE_CHECKING:
     pass
 
 
+def parse_model_scale_from_filename(filename: str) -> int | None:
+    """
+    Parse model scale from ONNX filename.
+
+    Looks for patterns like 1x, 2x, 4x, 8x or x1, x2, x4, x8 (case insensitive).
+
+    Args:
+        filename: The ONNX filename (without path).
+
+    Returns:
+        Scale value (1, 2, 4, or 8) if found, None otherwise.
+    """
+    # Pattern matches: 1x, 2x, 4x, 8x, x1, x2, x4, x8 (case insensitive)
+    # Also handles patterns like _4x_, -4x-, 4x_, _x4, etc.
+    patterns = [
+        r'(?:^|[_\-\s])([1248])x(?:[_\-\s]|$)',  # 4x at boundaries
+        r'(?:^|[_\-\s])x([1248])(?:[_\-\s]|$)',  # x4 at boundaries
+        r'([1248])x(?=[_\-\.\s]|$)',              # 4x followed by separator or end
+        r'x([1248])(?=[_\-\.\s]|$)',              # x4 followed by separator or end
+    ]
+
+    filename_lower = filename.lower()
+
+    for pattern in patterns:
+        match = re.search(pattern, filename_lower, re.IGNORECASE)
+        if match:
+            scale = int(match.group(1))
+            if scale in (1, 2, 4, 8):
+                return scale
+
+    return None
+
+
 class MainWindow(QMainWindow):
     """
     Main application window.
@@ -94,6 +127,12 @@ class MainWindow(QMainWindow):
         # Kernel state
         self._kernel = "lanczos"
 
+        # Model scale (auto-detected from ONNX filename or user-selected)
+        self._model_scale: int = 4
+
+        # Track if current inputs are from temp paths (clipboard/browser)
+        self._inputs_from_temp: bool = False
+
         # Worker thread references
         self._worker_thread: UpscaleWorkerThread | None = None
         self._clipboard_worker: ClipboardWorkerThread | None = None
@@ -120,10 +159,9 @@ class MainWindow(QMainWindow):
         self._onnx_edit = QLineEdit()
         self._onnx_edit.setText(DEFAULT_ONNX_PATH)
 
-        # Tile and scale combos
+        # Tile combos
         self._tile_w_combo = QComboBox()
         self._tile_h_combo = QComboBox()
-        self._model_scale_combo = QComboBox()
 
         for combo in (self._tile_w_combo, self._tile_h_combo):
             combo.setEditable(True)
@@ -131,10 +169,6 @@ class MainWindow(QMainWindow):
 
         self._tile_w_combo.setCurrentText("1088")
         self._tile_h_combo.setCurrentText("1920")
-
-        self._model_scale_combo.setEditable(False)
-        self._model_scale_combo.addItems([str(s) for s in VALID_MODEL_SCALES])
-        self._model_scale_combo.setCurrentText("4")
 
         # Checkboxes
         self._same_dir_check = QCheckBox("Save next to input with suffix:")
@@ -165,7 +199,7 @@ class MainWindow(QMainWindow):
         self._progress_bar.setRange(0, 100)
         self._thumbnail_label = QLabel("(no thumbnail)")
         self._thumbnail_label.setAlignment(Qt.AlignCenter)
-        self._thumbnail_label.setMinimumSize(QSize(200, 200))
+        self._thumbnail_label.setMinimumSize(QSize(400, 200))
         self._image_info_label = QLabel("")
         self._image_info_label.setAlignment(Qt.AlignCenter)
 
@@ -220,16 +254,14 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self._btn_onnx, row, 2)
         row += 1
 
-        # Tile / model scale group
-        tile_box = QGroupBox("SR tile / shape / scale")
+        # Tile / shape group
+        tile_box = QGroupBox("SR tile / shape")
         tile_layout = QHBoxLayout()
         tile_box.setLayout(tile_layout)
         tile_layout.addWidget(QLabel("Tile / Shape W:"))
         tile_layout.addWidget(self._tile_w_combo)
         tile_layout.addWidget(QLabel("Tile / Shape H:"))
         tile_layout.addWidget(self._tile_h_combo)
-        tile_layout.addWidget(QLabel("Model scale (SR):"))
-        tile_layout.addWidget(self._model_scale_combo)
         main_layout.addWidget(tile_box, row, 0, 1, 4)
         row += 1
 
@@ -335,7 +367,13 @@ class MainWindow(QMainWindow):
         self._onnx_edit.setText(config.onnx_path)
         self._tile_w_combo.setCurrentText(str(config.tile_w_limit))
         self._tile_h_combo.setCurrentText(str(config.tile_h_limit))
-        self._model_scale_combo.setCurrentText(str(config.model_scale))
+        self._model_scale = config.model_scale
+
+        # Try to auto-detect model scale from ONNX filename
+        if config.onnx_path:
+            detected_scale = parse_model_scale_from_filename(Path(config.onnx_path).name)
+            if detected_scale is not None:
+                self._model_scale = detected_scale
 
         self._same_dir_check.setChecked(config.same_dir)
         self._same_dir_suffix_edit.setText(config.same_dir_suffix)
@@ -382,7 +420,7 @@ class MainWindow(QMainWindow):
             onnx_path=self._onnx_edit.text().strip(),
             tile_w_limit=self._parse_tile_value(self._tile_w_combo.currentText(), 1088),
             tile_h_limit=self._parse_tile_value(self._tile_h_combo.currentText(), 1920),
-            model_scale=self._parse_model_scale(self._model_scale_combo.currentText()),
+            model_scale=self._model_scale,
             same_dir=self._same_dir_check.isChecked(),
             same_dir_suffix=self._same_dir_suffix_edit.text(),
             append_model_suffix=self._append_model_suffix_check.isChecked(),
@@ -689,6 +727,22 @@ class MainWindow(QMainWindow):
 
         self._input_items = unique
 
+        # Check if any inputs are from temp paths (clipboard/browser drag-drop)
+        temp_root_str = str(GUI_INPUT_TMP_ROOT)
+        any_from_temp = any(str(p).startswith(temp_root_str) for p in unique)
+
+        # Track temp input state and update same_dir checkbox accordingly
+        self._inputs_from_temp = any_from_temp
+        if any_from_temp:
+            # Disable "save next to input" for temp paths
+            self._same_dir_check.setChecked(False)
+            self._same_dir_check.setEnabled(False)
+            self._same_dir_suffix_edit.setEnabled(False)
+        else:
+            # Re-enable for regular paths
+            self._same_dir_check.setEnabled(True)
+            self._same_dir_suffix_edit.setEnabled(True)
+
         if not unique:
             self._input_edit.clear()
             self._current_file_label.setText("Current file: (none)")
@@ -773,6 +827,85 @@ class MainWindow(QMainWindow):
         )
         if file_path:
             self._onnx_edit.setText(file_path)
+            self._detect_or_ask_model_scale(file_path)
+
+    def _detect_or_ask_model_scale(self, onnx_path: str) -> None:
+        """
+        Detect model scale from ONNX filename or ask user to select.
+
+        Args:
+            onnx_path: Path to the ONNX model file.
+        """
+        filename = Path(onnx_path).name
+        detected_scale = parse_model_scale_from_filename(filename)
+
+        if detected_scale is not None:
+            self._model_scale = detected_scale
+            return
+
+        # Scale not detected, show dialog
+        scale = self._show_model_scale_dialog(filename)
+        if scale is not None:
+            self._model_scale = scale
+
+    def _show_model_scale_dialog(self, filename: str) -> int | None:
+        """
+        Show a dialog to select model scale.
+
+        Args:
+            filename: ONNX filename for display in the dialog.
+
+        Returns:
+            Selected scale (1, 2, 4, or 8) or None if cancelled.
+        """
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Model Scale")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+        dialog.setLayout(layout)
+
+        # Info label
+        info_label = QLabel(
+            f"Could not detect model scale from filename:\n\n"
+            f"  {filename}\n\n"
+            f"Please select the scale factor for this model:"
+        )
+        layout.addWidget(info_label)
+
+        # Dropdown for scale selection
+        combo_layout = QHBoxLayout()
+        combo_layout.addWidget(QLabel("Model Scale (SR):"))
+        scale_combo = QComboBox()
+        scale_combo.addItems(["1", "2", "4", "8"])
+        scale_combo.setCurrentText("4")  # Default to 4x
+        combo_layout.addWidget(scale_combo)
+        combo_layout.addStretch()
+        layout.addLayout(combo_layout)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        btn_layout.addStretch()
+        btn_layout.addWidget(ok_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+        result: list[int | None] = [None]
+
+        def on_ok() -> None:
+            result[0] = int(scale_combo.currentText())
+            dialog.accept()
+
+        def on_cancel() -> None:
+            dialog.reject()
+
+        ok_btn.clicked.connect(on_ok)
+        cancel_btn.clicked.connect(on_cancel)
+
+        dialog.exec()
+        return result[0]
 
     def _update_thumbnail(self, image_path: str) -> None:
         """Update the thumbnail preview."""
@@ -785,7 +918,7 @@ class MainWindow(QMainWindow):
             self._image_info_label.setText("")
             return
 
-        scaled = pix.scaled(320, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = pix.scaled(640, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._thumbnail_label.setPixmap(scaled)
         self._thumbnail_label.setText("")
 
@@ -874,18 +1007,6 @@ class MainWindow(QMainWindow):
             pass
         return 4
 
-    def _validate_model_scale(self, text: str) -> int | None:
-        """Validate model scale value."""
-        try:
-            v = int(text.strip())
-        except ValueError:
-            QMessageBox.critical(self, "Error", "Model scale must be 1, 2, 4, or 8.")
-            return None
-        if v not in VALID_MODEL_SCALES:
-            QMessageBox.critical(self, "Error", "Model scale must be 1, 2, 4, or 8.")
-            return None
-        return v
-
     # ========== Start / Cancel ==========
 
     def _on_start_clicked(self) -> None:
@@ -910,9 +1031,8 @@ class MainWindow(QMainWindow):
         if tile_h is None:
             return
 
-        model_scale = self._validate_model_scale(self._model_scale_combo.currentText())
-        if model_scale is None:
-            return
+        # Use the auto-detected or user-selected model scale
+        model_scale = self._model_scale
 
         # Validate custom resolution
         if self._custom_res_enabled:
@@ -1073,9 +1193,8 @@ class MainWindow(QMainWindow):
         if tile_h is None:
             return
 
-        model_scale = self._validate_model_scale(self._model_scale_combo.currentText())
-        if model_scale is None:
-            return
+        # Use the internally tracked model scale (auto-detected or user-selected)
+        model_scale = self._model_scale
 
         # Disable buttons during processing
         self._start_button.setEnabled(False)

@@ -273,3 +273,100 @@ def compute_padding(width: int, height: int, alignment: int = 64) -> tuple[int, 
     pad_bottom = total_pad_h - pad_top
 
     return pad_left, pad_right, pad_top, pad_bottom
+
+
+def get_video_duration(file_path: Path) -> float:
+    """
+    Get the duration of a video file in seconds.
+
+    Uses ffprobe if available, otherwise returns 0.0.
+
+    Args:
+        file_path: Path to the video file.
+
+    Returns:
+        Duration in seconds, or 0.0 if unable to determine.
+    """
+    import subprocess
+
+    try:
+        # Try ffprobe first (most reliable)
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,  # CREATE_NO_WINDOW
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+
+    return 0.0
+
+
+def get_video_fps(file_path: Path) -> float:
+    """
+    Get the frame rate of a video file.
+
+    Uses ffprobe if available, otherwise returns 0.0.
+
+    Args:
+        file_path: Path to the video file.
+
+    Returns:
+        Frame rate (fps), or 0.0 if unable to determine.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=r_frame_rate",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,  # CREATE_NO_WINDOW
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # r_frame_rate is returned as a fraction like "30/1" or "24000/1001"
+            fps_str = result.stdout.strip()
+            if "/" in fps_str:
+                num, den = fps_str.split("/")
+                return float(num) / float(den)
+            return float(fps_str)
+    except Exception:
+        pass
+
+    return 0.0
+
+
+def get_gif_frame_delay(file_path: Path) -> float:
+    """
+    Get the frame delay of a GIF file in milliseconds.
+
+    Uses ffprobe to get average frame rate, then converts to delay.
+
+    Args:
+        file_path: Path to the GIF file.
+
+    Returns:
+        Frame delay in milliseconds, or 100.0 (10fps) as default.
+    """
+    fps = get_video_fps(file_path)
+    if fps > 0:
+        return 1000.0 / fps
+    return 100.0  # Default to 100ms (10fps)
