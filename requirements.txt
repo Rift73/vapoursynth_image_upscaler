@@ -1,0 +1,13 @@
+# Core GUI dependency
+PySide6>=6.5.0
+
+# Optional: Rich progress bars in worker mode
+rich>=13.0.0
+
+# VapourSynth dependencies (install via vsrepo or your VS package manager)
+# These are listed for reference but typically not pip-installable:
+# - vapoursynth
+# - vstools
+# - vskernels
+# - vsmlrt
+# - vssource

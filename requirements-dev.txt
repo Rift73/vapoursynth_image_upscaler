@@ -1,0 +1,12 @@
+# Development dependencies
+-r requirements.txt
+
+# Linting and formatting
+ruff>=0.1.0
+
+# Type checking
+mypy>=1.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-qt>=4.2.0
