@@ -71,9 +71,13 @@ pip install -e ".[rich]"
 # Install GUI dependencies
 pip install PySide6
 
-# Run the application
+# Run the application (double-click run.bat or use command line)
+run.bat
+# or
 python -m vapoursynth_image_upscaler
 ```
+
+> **Note**: Use `run.bat` to launch without a console window. The `run.pyw` file may not work correctly depending on your Windows Python file associations.
 
 ### VapourSynth Setup
 
