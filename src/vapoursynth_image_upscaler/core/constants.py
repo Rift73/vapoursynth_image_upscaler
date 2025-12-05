@@ -64,6 +64,13 @@ PADDING_ALIGNMENT: int = 64
 CREATE_NO_WINDOW: int = 0x08000000
 """Windows creation flag to hide console windows for worker processes."""
 
+# Combined flags for completely hidden subprocess
+SUBPROCESS_FLAGS: int = (
+    0x08000000 |  # CREATE_NO_WINDOW
+    0x00000008    # DETACHED_PROCESS
+)
+"""Combined Windows flags for hidden subprocess execution."""
+
 # ============================================================================
 # Default Paths (can be overridden by user)
 # ============================================================================

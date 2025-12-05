@@ -10,6 +10,7 @@ from .constants import (
     ALPHA_SUPPORTED_EXTENSIONS,
     VALID_MODEL_SCALES,
     CREATE_NO_WINDOW,
+    SUBPROCESS_FLAGS,
 )
 from .config import Config
 from .utils import (
@@ -18,6 +19,7 @@ from .utils import (
     cleanup_gui_input_tmp,
     format_time_hms,
     user_requested_quit,
+    get_pythonw_executable,
 )
 
 __all__ = [
@@ -30,10 +32,12 @@ __all__ = [
     "ALPHA_SUPPORTED_EXTENSIONS",
     "VALID_MODEL_SCALES",
     "CREATE_NO_WINDOW",
+    "SUBPROCESS_FLAGS",
     "Config",
     "read_time_file",
     "cleanup_tmp_root",
     "cleanup_gui_input_tmp",
     "format_time_hms",
     "user_requested_quit",
+    "get_pythonw_executable",
 ]

@@ -23,6 +23,34 @@ except ImportError:
     pass
 
 
+def get_pythonw_executable() -> str:
+    """
+    Get the path to pythonw.exe (windowless Python) on Windows.
+
+    On Windows, this returns pythonw.exe to avoid console windows.
+    On other platforms, returns the current Python executable.
+
+    Returns:
+        Path to the Python executable to use for GUI subprocesses.
+    """
+    if sys.platform != "win32":
+        return sys.executable
+
+    executable = Path(sys.executable)
+
+    # If already using pythonw, return as-is
+    if executable.name.lower() == "pythonw.exe":
+        return sys.executable
+
+    # Try to find pythonw.exe in the same directory
+    pythonw = executable.parent / "pythonw.exe"
+    if pythonw.exists():
+        return str(pythonw)
+
+    # Fallback to regular python (will need CREATE_NO_WINDOW flag)
+    return sys.executable
+
+
 def user_requested_quit() -> bool:
     """
     Check if the user pressed 'q' or 'Q' in the Windows console.

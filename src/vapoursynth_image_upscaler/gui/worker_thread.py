@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QThread, Signal
 
 from ..core.constants import CREATE_NO_WINDOW
-from ..core.utils import read_time_file, cleanup_tmp_root
+from ..core.utils import read_time_file, cleanup_tmp_root, get_pythonw_executable
 
 if TYPE_CHECKING:
     pass
@@ -226,13 +226,35 @@ class UpscaleWorkerThread(QThread):
         secondary_dir: Path,
         env: dict[str, str],
     ) -> None:
-        """Run a worker subprocess."""
+        """Run a worker subprocess without creating a console window."""
+        # Use pythonw.exe on Windows to avoid console windows
+        python_exe = get_pythonw_executable()
+
         cmd = [
-            sys.executable,
+            python_exe,
             str(script_path),
             mode,
             str(input_file),
             str(output_dir),
             str(secondary_dir),
         ]
-        subprocess.run(cmd, check=False, env=env, creationflags=CREATE_NO_WINDOW)
+
+        # On Windows, use CREATE_NO_WINDOW flag as additional safeguard
+        # Also redirect stdin/stdout/stderr to DEVNULL to prevent any console attachment
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            subprocess.run(
+                cmd,
+                check=False,
+                env=env,
+                creationflags=CREATE_NO_WINDOW,
+                startupinfo=startupinfo,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.run(cmd, check=False, env=env)
