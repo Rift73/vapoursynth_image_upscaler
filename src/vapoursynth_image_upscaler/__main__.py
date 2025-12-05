@@ -17,7 +17,6 @@ Usage:
 from __future__ import annotations
 
 import sys
-import traceback
 
 
 def main() -> None:
@@ -36,12 +35,8 @@ def main() -> None:
         worker_main()
     else:
         # GUI mode
-        try:
-            from .gui import main_gui
-            main_gui()
-        except Exception:
-            traceback.print_exc()
-            input("\nAn error occurred. Press Enter to exit...")
+        from .gui import main_gui
+        main_gui()
 
 
 if __name__ == "__main__":
