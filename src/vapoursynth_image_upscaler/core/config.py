@@ -80,6 +80,9 @@ class Config:
     # Last used input path (for convenience on restart)
     input_path: str = ""
 
+    # Last used ONNX browse directory (for file browser persistence)
+    last_onnx_browse_dir: str = ""
+
     @classmethod
     def load(cls) -> Config:
         """
@@ -134,6 +137,7 @@ class Config:
                 config.sharpen_value = _read_reg_float(key, "sharpen_value", config.sharpen_value)
 
                 config.input_path = _read_reg_str(key, "input_path", config.input_path)
+                config.last_onnx_browse_dir = _read_reg_str(key, "last_onnx_browse_dir", config.last_onnx_browse_dir)
 
         except FileNotFoundError:
             # Registry key doesn't exist yet, use defaults
@@ -187,6 +191,7 @@ class Config:
                 _write_reg_float(key, "sharpen_value", self.sharpen_value)
 
                 _write_reg_str(key, "input_path", self.input_path)
+                _write_reg_str(key, "last_onnx_browse_dir", self.last_onnx_browse_dir)
 
         except OSError:
             # Failed to write to registry, silently ignore

@@ -267,23 +267,32 @@ class UpscaleWorkerThread(QThread):
             str(secondary_dir),
         ]
 
+        # Log file for worker output (useful for debugging)
+        log_file = TEMP_BASE / "worker_debug.log"
+
         # On Windows, use CREATE_NO_WINDOW flag as additional safeguard
-        # Also redirect stdin/stdout/stderr to DEVNULL to prevent any console attachment
+        # Redirect stdout/stderr to log file for debugging
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
 
-            subprocess.run(
-                cmd,
-                check=False,
-                env=env,
-                creationflags=CREATE_NO_WINDOW,
-                startupinfo=startupinfo,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            with open(log_file, "a", encoding="utf-8") as log:
+                log.write(f"\n{'='*60}\n")
+                log.write(f"Worker: {mode} | File: {input_file.name}\n")
+                log.write(f"{'='*60}\n")
+                log.flush()
+
+                subprocess.run(
+                    cmd,
+                    check=False,
+                    env=env,
+                    creationflags=CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=log,
+                )
         else:
             subprocess.run(cmd, check=False, env=env)
 
@@ -315,6 +324,13 @@ class ClipboardWorkerThread(QThread):
         custom_res_enabled: bool = False,
         custom_width: int = 0,
         custom_height: int = 0,
+        prescale_enabled: bool = False,
+        prescale_mode: str = "width",
+        prescale_width: int = 1920,
+        prescale_height: int = 1080,
+        kernel: str = "lanczos",
+        sharpen_enabled: bool = False,
+        sharpen_value: float = 0.5,
         parent=None,
     ):
         super().__init__(parent)
@@ -330,6 +346,13 @@ class ClipboardWorkerThread(QThread):
         self.custom_res_enabled = custom_res_enabled
         self.custom_width = custom_width
         self.custom_height = custom_height
+        self.prescale_enabled = prescale_enabled
+        self.prescale_mode = prescale_mode
+        self.prescale_width = prescale_width
+        self.prescale_height = prescale_height
+        self.kernel = kernel
+        self.sharpen_enabled = sharpen_enabled
+        self.sharpen_value = sharpen_value
 
     def run(self) -> None:
         """Run the upscale worker and emit the result path."""
@@ -403,6 +426,16 @@ class ClipboardWorkerThread(QThread):
         env["SECONDARY_HEIGHT"] = "0"
         env["USE_ALPHA"] = "1" if self.use_alpha else "0"
         env["APPEND_MODEL_SUFFIX"] = "0"  # No suffix for clipboard
+        env["PRESCALE_ENABLED"] = "1" if self.prescale_enabled else "0"
+        env["PRESCALE_MODE"] = self.prescale_mode
+        env["PRESCALE_WIDTH"] = str(self.prescale_width)
+        env["PRESCALE_HEIGHT"] = str(self.prescale_height)
+        env["KERNEL"] = self.kernel
+        env["SHARPEN_ENABLED"] = "1" if self.sharpen_enabled else "0"
+        env["SHARPEN_VALUE"] = str(self.sharpen_value)
+        env["INPUT_EXTENSION"] = self.input_file.suffix.lower()
+        env["INPUT_DURATION"] = "0.0"
+        env["INPUT_FPS"] = "0.0"
         return env
 
     def _run_worker(

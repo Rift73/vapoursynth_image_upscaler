@@ -60,6 +60,125 @@ def _build_backend(settings: WorkerSettings) -> Backend:
     )
 
 
+def build_alpha_from_arrays(
+    alpha_arrays: list,
+    settings: WorkerSettings,
+    target_width: int = 0,
+    target_height: int = 0,
+) -> vs.VideoNode:
+    """
+    Build SR alpha clip from a list of numpy alpha arrays.
+
+    This is used for GIF alpha processing where Pillow extracts the alpha
+    (since BestSource doesn't reliably expose GIF transparency).
+
+    Args:
+        alpha_arrays: List of numpy arrays (H, W) as uint8 representing alpha masks.
+        settings: Worker settings from environment.
+        target_width: Target output width (to match color frames). 0 = auto.
+        target_height: Target output height (to match color frames). 0 = auto.
+
+    Returns:
+        GRAY8 alpha clip after SR processing.
+    """
+    import numpy as np
+
+    if not alpha_arrays:
+        raise ValueError("No alpha arrays provided")
+
+    height, width = alpha_arrays[0].shape
+    num_frames = len(alpha_arrays)
+
+    # Create a blank clip with the right dimensions
+    blank = core.std.BlankClip(
+        width=width,
+        height=height,
+        format=vs.GRAY8,
+        length=num_frames,
+    )
+
+    # Make deep copies of the arrays to ensure they persist
+    _alpha_arrays_copy = [arr.copy() for arr in alpha_arrays]
+
+    # Define a frame modifier function to inject our alpha data
+    # Use a class to ensure the data persists across lazy evaluation
+    class AlphaInjector:
+        def __init__(self, arrays: list):
+            self.arrays = arrays
+
+        def __call__(self, n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+            fout = f.copy()
+            alpha_data = self.arrays[n]
+            np.copyto(np.asarray(fout[0]), alpha_data)
+            return fout
+
+    injector = AlphaInjector(_alpha_arrays_copy)
+
+    # Apply the modifier
+    clip = core.std.ModifyFrame(blank, blank, injector)
+
+    # Convert to RGBS for the model (replicate grayscale to RGB)
+    clip = core.resize.Bicubic(
+        clip,
+        format=vs.RGBS,
+        range_in=1,
+        range=1,
+    )
+
+    # Apply pre-scaling if enabled
+    clip = apply_prescale(clip, settings)
+
+    # Compute and apply padding
+    pad_left, pad_right, pad_top, pad_bottom = compute_padding(
+        clip.width, clip.height, PADDING_ALIGNMENT
+    )
+    clip = padder.MIRROR(clip, pad_left, pad_right, pad_top, pad_bottom)
+
+    # Clamp range
+    clip = core.std.Expr(clip, expr=["x 0 max 1 min"])
+
+    # Compute tile sizes
+    tile_h = min(settings.tile_h_limit, clip.height)
+    tile_w = min(settings.tile_w_limit, clip.width)
+
+    # Run through vsmlrt
+    clip = vsmlrt.inference(
+        clip,
+        backend=_build_backend(settings),
+        overlap=[16, 16],
+        tilesize=[tile_w, tile_h],
+        network_path=settings.onnx_path,
+    )
+
+    # Remove padding (scaled by model scale)
+    scale = settings.model_scale
+    clip = core.std.Crop(
+        clip,
+        left=pad_left * scale,
+        right=pad_right * scale,
+        top=pad_top * scale,
+        bottom=pad_bottom * scale,
+    )
+
+    # Resize to match target dimensions if specified (to match color output)
+    if target_width > 0 and target_height > 0:
+        if clip.width != target_width or clip.height != target_height:
+            kernel = _get_kernel(settings.kernel)
+            clip = depth(clip, 32)
+            clip = kernel.scale(clip, target_width, target_height, linear=True)
+
+    # Convert back to GRAY8
+    clip = core.resize.Bicubic(
+        clip,
+        format=vs.GRAY8,
+        matrix=1,
+        range_in=1,
+        range=1,
+    )
+
+    return clip
+
+
 def compute_prescale_dimensions(
     source_width: int,
     source_height: int,
@@ -147,7 +266,86 @@ def build_clip(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
     clip = initialize_clip(src)
 
     # Convert to RGBS (32-bit float RGB)
-    clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in=0, range_in=1, range=1)
+    clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in=0, transfer_in=13, primaries_in=1, range_in=1, range=1)
+
+    # Apply pre-scaling if enabled (before padding and upscaling)
+    clip = apply_prescale(clip, settings)
+
+    # Compute and apply padding to multiple of 64
+    pad_left, pad_right, pad_top, pad_bottom = compute_padding(
+        clip.width, clip.height, PADDING_ALIGNMENT
+    )
+    clip = padder.MIRROR(clip, pad_left, pad_right, pad_top, pad_bottom)
+
+    # Clamp to valid range
+    clip = core.std.Expr(clip, expr=["x 0 max 1 min"])
+
+    # Compute tile sizes
+    tile_h = min(settings.tile_h_limit, clip.height)
+    tile_w = min(settings.tile_w_limit, clip.width)
+
+    # Run through vsmlrt with TensorRT backend
+    clip = vsmlrt.inference(
+        clip,
+        backend=_build_backend(settings),
+        overlap=[16, 16],
+        tilesize=[tile_w, tile_h],
+        network_path=settings.onnx_path,
+    )
+
+    # Remove padding (scaled by model scale)
+    scale = settings.model_scale
+    clip = core.std.Crop(
+        clip,
+        left=pad_left * scale,
+        right=pad_right * scale,
+        top=pad_top * scale,
+        bottom=pad_bottom * scale,
+    )
+
+    return clip
+
+
+def build_clip_with_frame_selection(
+    input_path: Path,
+    settings: WorkerSettings,
+    frame_indices: list[int],
+) -> vs.VideoNode:
+    """
+    Build the VapourSynth processing chain with specific frame selection.
+
+    Used for GIF deduplication - only processes selected unique frames.
+
+    Args:
+        input_path: Path to the input image/video file.
+        settings: Worker settings from environment.
+        frame_indices: List of frame indices to include in the output.
+
+    Returns:
+        Processed clip with only the selected frames.
+    """
+    global _process_start_time
+    _process_start_time = time.perf_counter()
+
+    ext = input_path.suffix.lower()
+    img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+    if ext in img_exts:
+        src = core.imwri.Read(str(input_path))
+    else:
+        src = BestSource.source(str(input_path))
+
+    clip = initialize_clip(src)
+
+    # Select only the specified frames
+    if frame_indices and len(frame_indices) < len(clip):
+        # Use std.Splice to select specific frames
+        selected_frames = [clip[i] for i in frame_indices if i < len(clip)]
+        if selected_frames:
+            clip = core.std.Splice(selected_frames)
+
+    # Convert to RGBS (32-bit float RGB)
+    clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in=0, transfer_in=13, primaries_in=1, range_in=1, range=1)
 
     # Apply pre-scaling if enabled (before padding and upscaling)
     clip = apply_prescale(clip, settings)
@@ -218,6 +416,102 @@ def build_alpha_hq(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
         raise ValueError("HQ alpha workflow only supports PNG / GIF / WEBP inputs")
 
     clip = initialize_clip(src)
+
+    # Extract alpha from frame properties
+    alpha = core.std.PropToClip(clip)
+
+    # Convert alpha to RGBS for the model
+    alpha = core.resize.Bicubic(
+        alpha,
+        format=vs.RGBS,
+        transfer_in=13,
+        primaries_in=1,
+        range_in=1,
+        range=1,
+    )
+
+    # Apply pre-scaling if enabled (before padding and upscaling)
+    alpha = apply_prescale(alpha, settings)
+
+    # Compute and apply padding
+    pad_left, pad_right, pad_top, pad_bottom = compute_padding(
+        alpha.width, alpha.height, PADDING_ALIGNMENT
+    )
+    alpha = padder.MIRROR(alpha, pad_left, pad_right, pad_top, pad_bottom)
+
+    # Clamp range
+    alpha = core.std.Expr(alpha, expr=["x 0 max 1 min"])
+
+    # Compute tile sizes
+    tile_h = min(settings.tile_h_limit, alpha.height)
+    tile_w = min(settings.tile_w_limit, alpha.width)
+
+    # Run through vsmlrt
+    alpha = vsmlrt.inference(
+        alpha,
+        backend=_build_backend(settings),
+        tilesize=[tile_w, tile_h],
+        network_path=settings.onnx_path,
+    )
+
+    # Remove padding (scaled by model scale)
+    scale = settings.model_scale
+    alpha = core.std.Crop(
+        alpha,
+        left=pad_left * scale,
+        right=pad_right * scale,
+        top=pad_top * scale,
+        bottom=pad_bottom * scale,
+    )
+
+    # Convert to GRAY8 for fpng alpha
+    alpha = core.resize.Bicubic(
+        alpha,
+        format=vs.GRAY8,
+        matrix=1,
+        range_in=1,
+        range=1,
+    )
+
+    return alpha
+
+
+def build_alpha_hq_with_frame_selection(
+    input_path: Path,
+    settings: WorkerSettings,
+    frame_indices: list[int],
+) -> vs.VideoNode:
+    """
+    Build high-quality SR alpha channel with specific frame selection.
+
+    Used for GIF deduplication - only processes selected unique frames.
+
+    Args:
+        input_path: Path to the input file with alpha channel.
+        settings: Worker settings from environment.
+        frame_indices: List of frame indices to include in the output.
+
+    Returns:
+        GRAY8 alpha clip with only the selected frames.
+    """
+    global _process_start_time
+    _process_start_time = time.perf_counter()
+
+    ext = input_path.suffix.lower()
+    if ext == ".png":
+        src = core.imwri.Read(str(input_path), alpha=True)
+    elif ext in {".webp", ".gif"}:
+        src = BestSource.source(str(input_path))
+    else:
+        raise ValueError("HQ alpha workflow only supports PNG / GIF / WEBP inputs")
+
+    clip = initialize_clip(src)
+
+    # Select only the specified frames before extracting alpha
+    if frame_indices and len(frame_indices) < len(clip):
+        selected_frames = [clip[i] for i in frame_indices if i < len(clip)]
+        if selected_frames:
+            clip = core.std.Splice(selected_frames)
 
     # Extract alpha from frame properties
     alpha = core.std.PropToClip(clip)

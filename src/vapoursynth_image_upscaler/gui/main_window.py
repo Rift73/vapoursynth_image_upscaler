@@ -819,15 +819,44 @@ class MainWindow(QMainWindow):
 
     def _browse_onnx_file(self) -> None:
         """Open file browser for ONNX model."""
+        # Determine starting directory:
+        # 1. Use last browse directory if set and exists
+        # 2. Otherwise use parent of current ONNX path if set and exists
+        # 3. Otherwise use empty string (system default)
+        start_dir = ""
+        try:
+            if self._config.last_onnx_browse_dir:
+                last_dir = Path(self._config.last_onnx_browse_dir)
+                if last_dir.is_dir():
+                    start_dir = str(last_dir)
+        except Exception:
+            pass
+
+        if not start_dir:
+            try:
+                current_text = self._onnx_edit.text()
+                if current_text:
+                    current_parent = Path(current_text).parent
+                    if current_parent.is_dir():
+                        start_dir = str(current_parent)
+            except Exception:
+                pass
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select ONNX model",
-            "",
+            start_dir,
             "ONNX files (*.onnx);;All files (*.*)",
         )
         if file_path:
             self._onnx_edit.setText(file_path)
             self._detect_or_ask_model_scale(file_path)
+            # Save the directory for next time
+            try:
+                self._config.last_onnx_browse_dir = str(Path(file_path).parent)
+                self._config.save()
+            except Exception:
+                pass
 
     def _detect_or_ask_model_scale(self, onnx_path: str) -> None:
         """
@@ -1217,6 +1246,13 @@ class MainWindow(QMainWindow):
             custom_res_enabled=self._custom_res_enabled,
             custom_width=self._custom_res_width,
             custom_height=self._custom_res_height,
+            prescale_enabled=self._prescale_enabled,
+            prescale_mode=self._prescale_mode,
+            prescale_width=self._prescale_width,
+            prescale_height=self._prescale_height,
+            kernel=self._kernel,
+            sharpen_enabled=self._sharpen_check.isChecked(),
+            sharpen_value=self._get_sharpen_value(),
         )
         self._clipboard_worker.status_signal.connect(self._on_clipboard_status)
         self._clipboard_worker.result_signal.connect(self._on_clipboard_result)
