@@ -187,8 +187,54 @@ class UpscaleWorkerThread(QThread):
         """
         Run batch processing for eligible files.
 
+        Spawns separate subprocess for each chunk of MAX_BATCH_SIZE files
+        to ensure VRAM is fully released between chunks.
+
         Returns:
             Tuple of (total_time, num_processed).
+        """
+        if not files:
+            return 0.0, 0
+
+        # Split files into chunks to spawn separate processes for each
+        # This ensures VRAM is released when each subprocess exits
+        MAX_BATCH_SIZE = 100
+        chunks = [files[i:i + MAX_BATCH_SIZE] for i in range(0, len(files), MAX_BATCH_SIZE)]
+
+        total_batch_time = 0.0
+        total_processed = 0
+
+        for chunk_idx, chunk_files in enumerate(chunks):
+            if self._cancel_flag:
+                break
+
+            chunk_time, chunk_count = self._run_single_batch_chunk(
+                chunk_files,
+                total_files,
+                start_idx + total_processed,
+                chunk_idx + 1,
+                len(chunks),
+            )
+            total_batch_time += chunk_time
+            total_processed += chunk_count
+
+        return total_batch_time, total_processed
+
+    def _run_single_batch_chunk(
+        self,
+        files: list[Path],
+        total_files: int,
+        start_idx: int,
+        chunk_num: int,
+        total_chunks: int,
+    ) -> tuple[float, int]:
+        """
+        Run a single batch chunk in a subprocess.
+
+        Each chunk gets its own subprocess to ensure VRAM is released on exit.
+
+        Returns:
+            Tuple of (time, num_processed).
         """
         if not files:
             return 0.0, 0
@@ -197,7 +243,8 @@ class UpscaleWorkerThread(QThread):
         batch_start = time.perf_counter()
 
         # Emit initial progress
-        self.progress_signal.emit(start_idx, total_files, 0.0, f"Batch: {len(files)} images", "")
+        chunk_label = f" (chunk {chunk_num}/{total_chunks})" if total_chunks > 1 else ""
+        self.progress_signal.emit(start_idx, total_files, 0.0, f"Batch: {len(files)} images{chunk_label}", "")
 
         # Compute output dirs for all files
         output_dirs: list[Path] = []
