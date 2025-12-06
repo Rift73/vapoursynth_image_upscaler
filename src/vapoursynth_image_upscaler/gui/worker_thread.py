@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS, WORKER_TMP_ROOT
+from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS, WORKER_TMP_ROOT, MAX_BATCH_SIZE
 from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps
 
 # Extensions eligible for batch processing (static images only)
@@ -196,7 +196,6 @@ class UpscaleWorkerThread(QThread):
 
         # Split files into chunks to spawn separate processes for each
         # This ensures VRAM is released when each subprocess exits
-        MAX_BATCH_SIZE = 100
         chunks = [files[i:i + MAX_BATCH_SIZE] for i in range(0, len(files), MAX_BATCH_SIZE)]
 
         total_batch_time = 0.0

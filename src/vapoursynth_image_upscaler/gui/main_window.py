@@ -44,6 +44,23 @@ from .dialogs import CustomResolutionDialog
 from .worker_thread import UpscaleWorkerThread, ClipboardWorkerThread
 
 
+def _natural_sort_key(path: Path) -> list:
+    """
+    Generate a sort key for natural sorting of paths.
+
+    Splits the path string into text and numeric parts so that
+    "file2.png" comes before "file10.png".
+
+    Args:
+        path: Path to generate sort key for.
+
+    Returns:
+        List of alternating strings and integers for comparison.
+    """
+    parts = re.split(r'(\d+)', str(path))
+    return [int(p) if p.isdigit() else p.lower() for p in parts]
+
+
 def parse_model_scale_from_filename(filename: str) -> int | None:
     """
     Parse model scale from ONNX filename.
@@ -1145,7 +1162,7 @@ class MainWindow(QMainWindow):
                 files.append(root)
             else:
                 files.extend(
-                    p for p in sorted(root.rglob("*"))
+                    p for p in sorted(root.rglob("*"), key=_natural_sort_key)
                     if p.is_file() and p.suffix.lower() in exts
                 )
 

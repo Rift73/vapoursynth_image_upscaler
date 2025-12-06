@@ -95,8 +95,8 @@ def _batch_worker_main(core) -> None:
         process_batch,
         group_by_resolution_and_format,
         split_into_batches,
-        MAX_BATCH_SIZE,
     )
+    from ..core.constants import MAX_BATCH_SIZE
 
     # Parse arguments
     args = [a for a in sys.argv[1:] if a != "--batch-worker"]

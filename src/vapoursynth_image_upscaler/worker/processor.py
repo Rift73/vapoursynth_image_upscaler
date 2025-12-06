@@ -593,20 +593,7 @@ def process_one(
     base_name = input_path.stem
 
     # Compute destination paths
-    model_suffix = settings.get_model_suffix()
-
-    if settings.manga_folder_enabled:
-        # Manga folder mode: suffix is in the parent folder name, not the file
-        dest_stem = f"{base_name}{model_suffix}"
-        dest_dir_main = output_dir
-    elif settings.use_same_dir_output:
-        suffix = settings.same_dir_suffix or ""
-        dest_stem = f"{base_name}{suffix}{model_suffix}"
-        dest_dir_main = input_path.parent
-    else:
-        dest_stem = f"{base_name}{model_suffix}"
-        dest_dir_main = output_dir
-
+    dest_stem, dest_dir_main = settings.compute_dest_stem_and_dir(input_path, output_dir)
     dest_dir_secondary = secondary_output_dir
 
     # Determine output format based on input
@@ -843,20 +830,7 @@ def process_one_alpha(
             pass
 
     # Resolve main destination path (same logic as main worker)
-    model_suffix = settings.get_model_suffix()
-
-    if settings.manga_folder_enabled:
-        # Manga folder mode: suffix is in the parent folder name, not the file
-        dest_stem = f"{base_name}{model_suffix}"
-        dest_dir_main = output_dir
-    elif settings.use_same_dir_output:
-        suffix = settings.same_dir_suffix or ""
-        dest_stem = f"{base_name}{suffix}{model_suffix}"
-        dest_dir_main = input_path.parent
-    else:
-        dest_stem = f"{base_name}{model_suffix}"
-        dest_dir_main = output_dir
-
+    dest_stem, dest_dir_main = settings.compute_dest_stem_and_dir(input_path, output_dir)
     dest_name = f"{dest_stem}{file_ext}"
     dest_path = dest_dir_main / dest_name
 

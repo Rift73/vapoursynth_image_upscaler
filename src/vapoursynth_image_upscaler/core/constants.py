@@ -86,3 +86,10 @@ DEFAULT_ONNX_PATH: str = r"C:\Executables\models\HAT\HAT_L_28k_bf16.onnx"
 
 DEFAULT_OUTPUT_PATH: str = r"C:\Pictures\Temp"
 """Default output path for clipboard/browser image inputs."""
+
+# ============================================================================
+# Batch Processing
+# ============================================================================
+
+MAX_BATCH_SIZE: int = 100
+"""Maximum number of images to process in a single batch."""

@@ -148,3 +148,37 @@ class WorkerSettings:
             return "_" + Path(self.onnx_path).stem
         except Exception:
             return ""
+
+    def compute_dest_stem_and_dir(
+        self,
+        input_path: Path,
+        output_dir: Path,
+    ) -> tuple[str, Path]:
+        """
+        Compute destination filename stem and directory based on settings.
+
+        Args:
+            input_path: Path to the input file.
+            output_dir: Default output directory.
+
+        Returns:
+            Tuple of (dest_stem, dest_dir) where:
+            - dest_stem: The filename without extension (e.g., "image_upscaled_ModelName")
+            - dest_dir: The directory to write the output to
+        """
+        base_name = input_path.stem
+        model_suffix = self.get_model_suffix()
+
+        if self.manga_folder_enabled:
+            # Manga folder mode: suffix is in the parent folder name, not the file
+            dest_stem = f"{base_name}{model_suffix}"
+            dest_dir = output_dir
+        elif self.use_same_dir_output:
+            suffix = self.same_dir_suffix or ""
+            dest_stem = f"{base_name}{suffix}{model_suffix}"
+            dest_dir = input_path.parent
+        else:
+            dest_stem = f"{base_name}{model_suffix}"
+            dest_dir = output_dir
+
+        return dest_stem, dest_dir

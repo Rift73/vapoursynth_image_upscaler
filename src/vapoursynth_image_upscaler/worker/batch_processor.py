@@ -16,13 +16,10 @@ from typing import TYPE_CHECKING
 
 from PIL import Image
 
-from ..core.constants import WORKER_TMP_ROOT
+from ..core.constants import WORKER_TMP_ROOT, MAX_BATCH_SIZE
 
 if TYPE_CHECKING:
     from .settings import WorkerSettings
-
-# Maximum files per batch to avoid excessive storage activity
-MAX_BATCH_SIZE = 100
 
 
 def get_image_info(path: Path) -> tuple[int, int, str]:
@@ -256,9 +253,6 @@ def process_batch(
         # Output format: PNG for lossless
         out_fmt = ".png"
 
-        # Precompute model suffix for destination paths
-        model_suffix = settings.get_model_suffix()
-
         # Write frames and move to final destination immediately
         report_total = total_files if total_files > 0 else num_files
         print(f"Processing {num_files} output frames...")
@@ -267,16 +261,8 @@ def process_batch(
             output_dir = output_dirs[idx]
             secondary_dir = secondary_dirs[idx]
 
-            # Compute destination path
-            base_name = src_file.stem
-            if settings.manga_folder_enabled:
-                dest_stem = f"{base_name}{model_suffix}"
-            elif settings.use_same_dir_output:
-                suffix = settings.same_dir_suffix or ""
-                dest_stem = f"{base_name}{suffix}{model_suffix}"
-                output_dir = src_file.parent
-            else:
-                dest_stem = f"{base_name}{model_suffix}"
+            # Compute destination path using shared helper
+            dest_stem, output_dir = settings.compute_dest_stem_and_dir(src_file, output_dir)
 
             # Ensure output directory exists
             output_dir.mkdir(parents=True, exist_ok=True)
