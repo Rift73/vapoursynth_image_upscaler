@@ -161,6 +161,13 @@ def _batch_worker_main(core) -> None:
                 all_times.extend(times)
                 batch_offset += len(batch_files)
 
+                # Clear VRAM between batches to prevent accumulation
+                try:
+                    core.clear_cache()
+                except Exception:
+                    pass
+                gc.collect()
+
         # Write timing results back
         result_path = manifest_path.with_suffix(".result")
         with open(result_path, "w", encoding="utf-8") as f:

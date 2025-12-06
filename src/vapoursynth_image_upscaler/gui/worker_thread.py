@@ -405,16 +405,35 @@ class UpscaleWorkerThread(QThread):
         # Fallback to package's __main__.py
         return Path(__file__).parent.parent / "__main__.py"
 
+    def _get_secondary_folder_name(self) -> str:
+        """
+        Get the secondary output folder name based on settings.
+
+        Returns:
+            - "Downscaled" if 2x mode is selected
+            - "{width}P" for width mode
+            - "{height}P" for height mode
+        """
+        if self.secondary_mode == "2x":
+            return "Downscaled"
+        elif self.secondary_mode == "height":
+            return f"{self.secondary_height}P"
+        else:
+            # Width mode (default)
+            return f"{self.secondary_width}P"
+
     def _compute_output_dirs(self, f: Path) -> tuple[Path, Path]:
         """Compute output directories for a specific file."""
+        secondary_folder = self._get_secondary_folder_name()
+
         if self.manga_folder_enabled:
             # Manga folder mode: Parent Folder_suffix/Subfolder/.../
             per_output_dir = self._compute_manga_output_dir(f)
-            per_secondary_dir = per_output_dir.parent / "secondary-resized" / per_output_dir.name
+            per_secondary_dir = per_output_dir.parent / secondary_folder / per_output_dir.name
         elif self.same_dir_enabled:
             per_output_dir = self.output_dir  # Placeholder; worker uses input.parent
             base_dir = f.parent if f.is_file() else f
-            per_secondary_dir = base_dir / "secondary-resized"
+            per_secondary_dir = base_dir / secondary_folder
         else:
             if self.single_input_is_file:
                 per_output_dir = self.output_dir
@@ -422,7 +441,7 @@ class UpscaleWorkerThread(QThread):
             else:
                 base_dir = f.parent if f.is_file() else f
                 per_output_dir = base_dir / "Upscaled"
-                per_secondary_dir = base_dir / "secondary-resized"
+                per_secondary_dir = base_dir / secondary_folder
 
         return per_output_dir, per_secondary_dir
 

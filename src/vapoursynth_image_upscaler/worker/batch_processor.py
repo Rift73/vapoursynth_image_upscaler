@@ -138,6 +138,7 @@ def process_batch(
         apply_custom_resolution,
         apply_sharpening,
         compute_custom_resolution_dimensions,
+        compute_secondary_dimensions,
         clear_cache,
     )
 
@@ -229,8 +230,27 @@ def process_batch(
 
         # Write output sequence
         output_seq_dir.mkdir(parents=True, exist_ok=True)
+        secondary_seq_dir = temp_dir / "secondary"
 
-        # Convert to RGB24 for output
+        # Prepare secondary clip if enabled
+        clip_secondary = None
+        if settings.use_secondary_output:
+            secondary_seq_dir.mkdir(parents=True, exist_ok=True)
+            sec_w, sec_h = compute_secondary_dimensions(
+                clip.width, clip.height,
+                settings.secondary_mode,
+                settings.secondary_width,
+                settings.secondary_height,
+            )
+            if sec_w > 0 and sec_h > 0:
+                from vskernels import Lanczos, Hermite
+                sec_kernel = Hermite if settings.secondary_kernel == "hermite" else Lanczos
+                clip_secondary = depth(clip, 32)
+                clip_secondary = sec_kernel().scale(clip_secondary, sec_w, sec_h, linear=True)
+                clip_secondary = core.resize.Point(clip_secondary, format=vs.RGB24)
+                print(f"Secondary output enabled: {sec_w}x{sec_h}")
+
+        # Convert main to RGB24 for output
         clip = core.resize.Point(clip, format=vs.RGB24)
 
         # Output format: PNG for lossless
@@ -240,6 +260,7 @@ def process_batch(
         report_total = total_files if total_files > 0 else num_files
         print(f"Writing {num_files} output frames as PNG...")
         for idx in range(num_files):
+            # Write main output
             frame_clip = clip[idx]
             out_path = output_seq_dir / f"out_{idx:06d}{out_fmt}"
             sink = frame_clip.fpng.Write(
@@ -249,6 +270,17 @@ def process_batch(
             # Force evaluation
             for _ in sink.frames(close=True):
                 pass
+
+            # Write secondary output if enabled
+            if clip_secondary is not None:
+                sec_frame = clip_secondary[idx]
+                sec_path = secondary_seq_dir / f"sec_{idx:06d}{out_fmt}"
+                sec_sink = sec_frame.fpng.Write(
+                    filename=str(sec_path),
+                    overwrite=1,
+                )
+                for _ in sec_sink.frames(close=True):
+                    pass
 
             # Update progress file for GUI tracking
             if progress_file is not None:
@@ -281,6 +313,7 @@ def process_batch(
             # Compute destination path
             base_name = src_file.stem
             output_dir = output_dirs[idx]
+            secondary_dir = secondary_dirs[idx]
 
             if settings.manga_folder_enabled:
                 dest_stem = f"{base_name}{model_suffix}"
@@ -298,7 +331,7 @@ def process_batch(
             # Ensure output directory exists
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Handle overwrite
+            # Handle overwrite for main output
             if dest_path.exists():
                 if settings.overwrite_output:
                     dest_path.unlink()
@@ -310,8 +343,29 @@ def process_batch(
                         dest_path = output_dir / dest_name
                         counter += 1
 
-            # Move file
+            # Move main file
             shutil.move(str(out_file), str(dest_path))
+
+            # Move secondary file if it exists
+            if settings.use_secondary_output:
+                sec_file = secondary_seq_dir / f"sec_{idx:06d}{out_fmt}"
+                if sec_file.exists():
+                    secondary_dir.mkdir(parents=True, exist_ok=True)
+                    sec_dest_name = f"{dest_stem}.png"
+                    sec_dest_path = secondary_dir / sec_dest_name
+
+                    # Handle overwrite for secondary output
+                    if sec_dest_path.exists():
+                        if settings.overwrite_output:
+                            sec_dest_path.unlink()
+                        else:
+                            counter = 2
+                            while sec_dest_path.exists():
+                                sec_dest_name = f"{dest_stem}_{counter:03d}.png"
+                                sec_dest_path = secondary_dir / sec_dest_name
+                                counter += 1
+
+                    shutil.move(str(sec_file), str(sec_dest_path))
 
             frame_time = time.perf_counter() - frame_start
             times.append(frame_time)
