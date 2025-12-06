@@ -38,7 +38,7 @@ pip install -e .
 
 You need to manually install:
 
-- Vapooursynth
+- Vapoursynth
 - vsmlrt (TRT)
 - vsjetpack plugins
 
