@@ -18,6 +18,7 @@ A Windows desktop tool for batch image super-resolution using VapourSynth and Te
 - Post-upscale sharpening with CAS
 - Manga folder mode for preserving directory structure
 - Real-time progress with ETA tracking
+- Batch processing mode for faster inference on multiple images
 
 ## Requirements
 
@@ -33,12 +34,15 @@ git clone https://github.com/yourusername/vapoursynth_image_upscaler.git
 cd vapoursynth_image_upscaler
 pip install -e .
 ```
+```pip install -r requirements.txt```
 
-Install VapourSynth plugins:
+You need to manually install:
 
-```bash
-vsrepo install vstools vskernels vsmlrt vssource fpng
-```
+- Vapooursynth
+- vsmlrt (TRT)
+- vsjetpack plugins
+
+Find the upscaling model on openmodeldb
 
 ## Usage
 
@@ -79,6 +83,13 @@ Each supports width-based, height-based, or 2x scaling with Lanczos or Hermite k
 - **Sharpen**: Apply contrast adaptive sharpening to output
 - **Overwrite**: Replace existing files or auto-increment names
 - **Append model suffix**: Add model name to output filenames
+- **Batch mode**: Process multiple same-resolution images together for faster inference
+
+### Batch Processing Mode
+
+When enabled, batch mode groups images by resolution and format, then processes them as a continuous sequence through vsmlrt. This provides significantly faster inference (up to 2x) compared to processing images individually, as it reduces GPU initialization overhead.
+
+Batch mode is automatically applied to static images (PNG, JPG, BMP, TIFF, WebP) that don't require alpha processing. Images with different resolutions or formats are grouped separately and processed in batches of up to 100 files.
 
 ## Architecture
 

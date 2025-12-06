@@ -182,6 +182,8 @@ class MainWindow(QMainWindow):
         self._overwrite_check = QCheckBox("Overwrite")
         self._overwrite_check.setChecked(True)
         self._alpha_check = QCheckBox("Transparency")
+        self._batch_mode_check = QCheckBox("Batch mode")
+        self._batch_mode_check.setToolTip("Process images as sequence (faster, no alpha)")
 
         # Precision checkboxes
         self._fp16_check = QCheckBox("fp16")
@@ -313,6 +315,7 @@ class MainWindow(QMainWindow):
         opts_container.setLayout(opts_layout)
         opts_layout.addWidget(self._overwrite_check)
         opts_layout.addWidget(self._alpha_check)
+        opts_layout.addWidget(self._batch_mode_check)
         opts_layout.addWidget(self._append_model_suffix_check)
         opts_layout.addWidget(self._custom_res_button)
         opts_layout.addStretch()
@@ -389,6 +392,7 @@ class MainWindow(QMainWindow):
             self._same_dir_check.setEnabled(False)
         self._overwrite_check.setChecked(config.overwrite)
         self._alpha_check.setChecked(config.use_alpha)
+        self._batch_mode_check.setChecked(config.batch_mode)
         self._append_model_suffix_check.setChecked(config.append_model_suffix)
 
         self._fp16_check.setChecked(config.use_fp16)
@@ -439,6 +443,7 @@ class MainWindow(QMainWindow):
             append_model_suffix=self._append_model_suffix_check.isChecked(),
             overwrite=self._overwrite_check.isChecked(),
             use_alpha=self._alpha_check.isChecked(),
+            batch_mode=self._batch_mode_check.isChecked(),
             use_fp16=self._fp16_check.isChecked(),
             use_bf16=self._bf16_check.isChecked(),
             use_tf32=self._tf32_check.isChecked(),
@@ -1207,6 +1212,7 @@ class MainWindow(QMainWindow):
             prescale_kernel=self._prescale_kernel,
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
+            use_batch_mode=self._batch_mode_check.isChecked(),
         )
         self._worker_thread.progress_signal.connect(self._on_progress_update)
         self._worker_thread.thumbnail_signal.connect(self._on_thumbnail_update)

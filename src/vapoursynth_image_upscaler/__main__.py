@@ -2,7 +2,7 @@
 Main entry point for VapourSynth Image Upscaler.
 
 This module handles the mode detection and dispatches to either:
-- Worker mode (--worker or --alpha-worker): Heavy VapourSynth processing
+- Worker mode (--worker, --alpha-worker, --batch-worker): Heavy VapourSynth processing
 - GUI mode (default): PySide6 graphical interface
 
 Usage:
@@ -12,6 +12,7 @@ Usage:
     # Worker mode (spawned by GUI)
     python -m vapoursynth_image_upscaler --worker <input> <output_dir> <secondary_dir>
     python -m vapoursynth_image_upscaler --alpha-worker <input> <output_dir> <secondary_dir>
+    python -m vapoursynth_image_upscaler --batch-worker <manifest_json>
 """
 
 from __future__ import annotations
@@ -26,7 +27,8 @@ def main() -> None:
     Detects the mode based on command-line arguments and dispatches accordingly.
     """
     # Check for worker mode flags
-    is_worker = "--worker" in sys.argv[1:] or "--alpha-worker" in sys.argv[1:]
+    worker_flags = ("--worker", "--alpha-worker", "--batch-worker")
+    is_worker = any(flag in sys.argv[1:] for flag in worker_flags)
 
     if is_worker:
         # Worker mode: import and run worker

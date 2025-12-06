@@ -52,6 +52,7 @@ class Config:
     append_model_suffix: bool = False
     overwrite: bool = True
     use_alpha: bool = False
+    batch_mode: bool = False
 
     # Custom resolution settings
     custom_res_enabled: bool = False
@@ -118,6 +119,7 @@ class Config:
                 config.append_model_suffix = _read_reg_bool(key, "append_model_suffix", config.append_model_suffix)
                 config.overwrite = _read_reg_bool(key, "overwrite", config.overwrite)
                 config.use_alpha = _read_reg_bool(key, "use_alpha", config.use_alpha)
+                config.batch_mode = _read_reg_bool(key, "batch_mode", config.batch_mode)
 
                 config.custom_res_enabled = _read_reg_bool(key, "custom_res_enabled", config.custom_res_enabled)
                 config.custom_res_width = _read_reg_int(key, "custom_res_width", config.custom_res_width)
@@ -175,6 +177,7 @@ class Config:
                 _write_reg_bool(key, "append_model_suffix", self.append_model_suffix)
                 _write_reg_bool(key, "overwrite", self.overwrite)
                 _write_reg_bool(key, "use_alpha", self.use_alpha)
+                _write_reg_bool(key, "batch_mode", self.batch_mode)
 
                 _write_reg_bool(key, "custom_res_enabled", self.custom_res_enabled)
                 _write_reg_int(key, "custom_res_width", self.custom_res_width)

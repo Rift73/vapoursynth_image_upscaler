@@ -4,6 +4,7 @@ Background worker thread for spawning upscale worker processes.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -13,11 +14,14 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
 
-from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS
+from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS, WORKER_TMP_ROOT
 from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps
 
 if TYPE_CHECKING:
     pass
+
+# Extensions eligible for batch processing (static images only)
+BATCH_ELIGIBLE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
 class UpscaleWorkerThread(QThread):
@@ -73,10 +77,12 @@ class UpscaleWorkerThread(QThread):
         prescale_kernel: str = "lanczos",
         sharpen_enabled: bool = False,
         sharpen_value: float = 0.5,
+        use_batch_mode: bool = False,
         parent=None,
     ):
         super().__init__(parent)
         self.files = files
+        self.use_batch_mode = use_batch_mode
         self.output_dir = output_dir
         self.secondary_output_dir = secondary_output_dir
         self.single_input_is_file = single_input_is_file
@@ -119,26 +125,242 @@ class UpscaleWorkerThread(QThread):
 
     def run(self) -> None:
         """Main thread execution."""
-        # Get the entry point script path
-        script_path = self._get_script_path()
+        # Separate batch-eligible files from non-batch files
+        batch_files: list[Path] = []
+        single_files: list[Path] = []
+
+        for f in self.files:
+            ext = f.suffix.lower()
+            # Only static images without alpha requirement are batch-eligible
+            if self.use_batch_mode and ext in BATCH_ELIGIBLE_EXTENSIONS and not self.use_alpha:
+                batch_files.append(f)
+            else:
+                single_files.append(f)
+
+        print(f"Batch mode: {self.use_batch_mode}, Alpha: {self.use_alpha}")
+        print(f"Total files: {len(self.files)}, Batch eligible: {len(batch_files)}, Single: {len(single_files)}")
 
         total_files = len(self.files)
         total_processing_time = 0.0
         num_timed = 0
         current_avg = 0.0
+        processed_count = 0
 
-        for idx, f in enumerate(self.files, start=1):
+        # Process batch-eligible files first
+        if batch_files and not self._cancel_flag:
+            batch_time, batch_count = self._run_batch_processing(batch_files, total_files, processed_count)
+            total_processing_time += batch_time
+            num_timed += batch_count
+            processed_count += batch_count
+            if batch_count > 0:
+                current_avg = total_processing_time / num_timed
+
+        # Process remaining files individually
+        if single_files and not self._cancel_flag:
+            single_time, single_count, current_avg = self._run_single_processing(
+                single_files, total_files, processed_count, current_avg
+            )
+            total_processing_time += single_time
+            num_timed += single_count
+
+        # Build summary
+        if num_timed > 0:
+            final_avg = total_processing_time / num_timed
+            summary = f"Average processing time per image: {final_avg:.2f} s over {num_timed} image(s)."
+        else:
+            summary = "No timing information recorded."
+
+        if self._cancel_flag:
+            final_text = "Cancelled. " + summary
+        else:
+            final_text = "Done. " + summary
+
+        cleanup_tmp_root()
+        self.finished_signal.emit(final_text)
+
+    def _run_batch_processing(
+        self,
+        files: list[Path],
+        total_files: int,
+        start_idx: int,
+    ) -> tuple[float, int]:
+        """
+        Run batch processing for eligible files.
+
+        Returns:
+            Tuple of (total_time, num_processed).
+        """
+        if not files:
+            return 0.0, 0
+
+        script_path = self._get_script_path()
+        batch_start = time.perf_counter()
+
+        # Emit initial progress
+        self.progress_signal.emit(start_idx, total_files, 0.0, f"Batch: {len(files)} images", "")
+
+        # Compute output dirs for all files
+        output_dirs: list[Path] = []
+        secondary_dirs: list[Path] = []
+        for f in files:
+            out_dir, sec_dir = self._compute_output_dirs(f)
+            self._ensure_dirs(out_dir, sec_dir)
+            output_dirs.append(out_dir)
+            secondary_dirs.append(sec_dir)
+
+        # Create manifest file with progress tracking
+        WORKER_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        manifest_path = WORKER_TMP_ROOT / f"manifest_{time.time_ns()}.json"
+        progress_file = manifest_path.with_suffix(".progress")
+        manifest = {
+            "files": [str(f) for f in files],
+            "output_dirs": [str(d) for d in output_dirs],
+            "secondary_dirs": [str(d) for d in secondary_dirs],
+            "progress_file": str(progress_file),
+        }
+        with open(manifest_path, "w", encoding="utf-8") as mf:
+            json.dump(manifest, mf)
+
+        # Build environment
+        env = self._build_worker_env()
+
+        # Run batch worker
+        python_exe = get_pythonw_executable()
+        cmd = [
+            python_exe,
+            str(script_path),
+            "--batch-worker",
+            str(manifest_path),
+        ]
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=CREATE_NO_WINDOW,
+            )
+
+            # Poll for progress while process runs
+            last_progress_idx = 0
+            poll_interval = 0.25  # Check every 250ms
+            while process.poll() is None:
+                # Check for cancellation
+                if self._cancel_flag:
+                    process.terminate()
+                    break
+
+                # Read progress file
+                if progress_file.exists():
+                    try:
+                        with open(progress_file, "r", encoding="utf-8") as pf:
+                            content = pf.read().strip()
+                        if content:
+                            parts = content.split(",", 2)
+                            if len(parts) >= 3:
+                                current_idx = int(parts[0])
+                                total = int(parts[1])
+                                filename = parts[2]
+                                if current_idx > last_progress_idx:
+                                    last_progress_idx = current_idx
+                                    # Calculate average time so far
+                                    elapsed = time.perf_counter() - batch_start
+                                    avg_time = elapsed / current_idx if current_idx > 0 else 0.0
+                                    self.progress_signal.emit(
+                                        start_idx + current_idx,
+                                        total_files,
+                                        avg_time,
+                                        filename,
+                                        "",
+                                    )
+                    except Exception:
+                        pass
+
+                time.sleep(poll_interval)
+
+            # Get output after process completes
+            stdout, stderr = process.communicate()
+
+            if stdout:
+                print(f"Batch worker output:\n{stdout}")
+            if process.returncode != 0:
+                print(f"Batch worker failed with code {process.returncode}")
+                if stderr:
+                    print(f"Batch worker stderr:\n{stderr}")
+        except Exception as e:
+            print(f"Batch worker exception: {e}")
+
+        # Cleanup progress file
+        try:
+            if progress_file.exists():
+                progress_file.unlink()
+        except Exception:
+            pass
+
+        # Read timing results if available
+        result_path = manifest_path.with_suffix(".result")
+        times: list[float] = []
+        if result_path.exists():
+            try:
+                with open(result_path, "r", encoding="utf-8") as rf:
+                    result_data = json.load(rf)
+                    times = result_data.get("times", [])
+                result_path.unlink()
+            except Exception:
+                pass
+
+        # Cleanup manifest
+        try:
+            manifest_path.unlink()
+        except Exception:
+            pass
+
+        batch_time = time.perf_counter() - batch_start
+        num_processed = len(files)
+
+        # Emit final progress for batch
+        avg_time = batch_time / num_processed if num_processed > 0 else 0.0
+        self.progress_signal.emit(
+            start_idx + num_processed,
+            total_files,
+            avg_time,
+            f"Batch complete",
+            "",
+        )
+
+        return batch_time, num_processed
+
+    def _run_single_processing(
+        self,
+        files: list[Path],
+        total_files: int,
+        start_idx: int,
+        current_avg: float,
+    ) -> tuple[float, int, float]:
+        """
+        Run single-file processing for non-batch files.
+
+        Returns:
+            Tuple of (total_time, num_processed, updated_avg).
+        """
+        script_path = self._get_script_path()
+        total_time = 0.0
+        num_processed = 0
+
+        for idx, f in enumerate(files):
             if self._cancel_flag:
                 break
 
-            # Emit thumbnail and initial progress (preserve current avg for ETA)
+            global_idx = start_idx + idx + 1
+
+            # Emit thumbnail and initial progress
             self.thumbnail_signal.emit(str(f))
-            self.progress_signal.emit(idx - 1, total_files, current_avg, f.name, str(f))
+            self.progress_signal.emit(global_idx - 1, total_files, current_avg, f.name, str(f))
 
             # Determine per-file output directories
             per_output_dir, per_secondary_dir = self._compute_output_dirs(f)
-
-            # Ensure directories exist
             self._ensure_dirs(per_output_dir, per_secondary_dir)
 
             # Get input file info for format detection
@@ -161,28 +383,17 @@ class UpscaleWorkerThread(QThread):
             if self.use_alpha and not self._cancel_flag:
                 self._run_worker(script_path, "--alpha-worker", f, per_output_dir, per_secondary_dir, env)
 
-            # Use wall-clock time (includes subprocess overhead) for accurate ETA
+            # Use wall-clock time for accurate ETA
             file_elapsed = time.perf_counter() - file_start
-            total_processing_time += file_elapsed
-            num_timed += 1
+            total_time += file_elapsed
+            num_processed += 1
 
-            current_avg = total_processing_time / num_timed if num_timed > 0 else 0.0
-            self.progress_signal.emit(idx, total_files, current_avg, f.name, str(f))
+            # Update running average (including batch files)
+            total_processed = start_idx + num_processed
+            current_avg = (current_avg * start_idx + total_time) / total_processed if total_processed > 0 else 0.0
+            self.progress_signal.emit(global_idx, total_files, current_avg, f.name, str(f))
 
-        # Build summary
-        if num_timed > 0:
-            final_avg = total_processing_time / num_timed
-            summary = f"Average processing time per image: {final_avg:.2f} s over {num_timed} image(s)."
-        else:
-            summary = "No timing information recorded."
-
-        if self._cancel_flag:
-            final_text = "Cancelled. " + summary
-        else:
-            final_text = "Done. " + summary
-
-        cleanup_tmp_root()
-        self.finished_signal.emit(final_text)
+        return total_time, num_processed, current_avg
 
     def _get_script_path(self) -> Path:
         """Get the path to the main entry point script."""
