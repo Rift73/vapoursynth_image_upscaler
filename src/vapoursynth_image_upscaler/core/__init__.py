@@ -19,7 +19,6 @@ from .utils import (
     cleanup_tmp_root,
     cleanup_gui_input_tmp,
     format_time_hms,
-    user_requested_quit,
     get_pythonw_executable,
 )
 
@@ -40,6 +39,5 @@ __all__ = [
     "cleanup_tmp_root",
     "cleanup_gui_input_tmp",
     "format_time_hms",
-    "user_requested_quit",
     "get_pythonw_executable",
 ]

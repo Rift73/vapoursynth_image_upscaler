@@ -40,6 +40,7 @@ class WorkerSettings:
     use_fp16: bool
     use_bf16: bool
     use_tf32: bool
+    num_streams: int  # num_streams for Backend.TRT
 
     # Secondary output settings
     use_secondary_output: bool
@@ -110,6 +111,7 @@ class WorkerSettings:
             use_fp16=get_env_bool("USE_FP16", False),
             use_bf16=get_env_bool("USE_BF16", True),
             use_tf32=get_env_bool("USE_TF32", False),
+            num_streams=get_env_int("NUM_STREAMS", 1),
             use_secondary_output=get_env_bool("USE_SECONDARY_OUTPUT", False),
             secondary_mode=get_env_str("SECONDARY_MODE", "width"),
             secondary_width=get_env_int("SECONDARY_WIDTH", 1920),

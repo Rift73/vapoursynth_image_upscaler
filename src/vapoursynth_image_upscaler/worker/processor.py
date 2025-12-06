@@ -17,7 +17,6 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from vstools import vs, core, depth
 from vskernels import Hermite, Lanczos
@@ -33,7 +32,6 @@ from .pipeline import (
     build_clip,
     build_clip_with_frame_selection,
     build_alpha_hq,
-    build_alpha_hq_with_frame_selection,
     build_alpha_from_arrays,
     apply_custom_resolution,
     apply_sharpening,
@@ -43,9 +41,6 @@ from .pipeline import (
     get_process_start_time,
 )
 from .progress import track
-
-if TYPE_CHECKING:
-    pass
 
 
 def _extract_gif_alpha_masks(gif_path: Path, frame_indices: list[int] | None = None) -> list | None:

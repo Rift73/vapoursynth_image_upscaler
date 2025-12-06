@@ -7,20 +7,7 @@ from __future__ import annotations
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
 from .constants import WORKER_TMP_ROOT, GUI_INPUT_TMP_ROOT
-
-if TYPE_CHECKING:
-    pass
-
-# Check for Windows console input support
-_HAS_MSVCRT = False
-try:
-    import msvcrt
-    _HAS_MSVCRT = True
-except ImportError:
-    pass
 
 
 def get_pythonw_executable() -> str:
@@ -49,29 +36,6 @@ def get_pythonw_executable() -> str:
 
     # Fallback to regular python (will need CREATE_NO_WINDOW flag)
     return sys.executable
-
-
-def user_requested_quit() -> bool:
-    """
-    Check if the user pressed 'q' or 'Q' in the Windows console.
-
-    Non-blocking check, primarily kept for possible CLI use/debug.
-
-    Returns:
-        True if 'q' or 'Q' was pressed, False otherwise.
-    """
-    if not _HAS_MSVCRT:
-        return False
-
-    if not msvcrt.kbhit():
-        return False
-
-    ch = msvcrt.getch()
-    try:
-        s = ch.decode("utf-8", errors="ignore")
-    except Exception:
-        s = ""
-    return s.lower() == "q"
 
 
 def read_time_file(base_name: str) -> float | None:
@@ -352,21 +316,3 @@ def get_video_fps(file_path: Path) -> float:
         pass
 
     return 0.0
-
-
-def get_gif_frame_delay(file_path: Path) -> float:
-    """
-    Get the frame delay of a GIF file in milliseconds.
-
-    Uses ffprobe to get average frame rate, then converts to delay.
-
-    Args:
-        file_path: Path to the GIF file.
-
-    Returns:
-        Frame delay in milliseconds, or 100.0 (10fps) as default.
-    """
-    fps = get_video_fps(file_path)
-    if fps > 0:
-        return 1000.0 / fps
-    return 100.0  # Default to 100ms (10fps)

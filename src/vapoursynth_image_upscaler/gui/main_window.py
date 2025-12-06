@@ -8,7 +8,6 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 from urllib.request import urlretrieve, Request, urlopen
 
@@ -43,9 +42,6 @@ from ..core.config import Config
 from ..core.utils import cleanup_gui_input_tmp, format_time_hms
 from .dialogs import CustomResolutionDialog
 from .worker_thread import UpscaleWorkerThread, ClipboardWorkerThread
-
-if TYPE_CHECKING:
-    pass
 
 
 def parse_model_scale_from_filename(filename: str) -> int | None:
@@ -173,6 +169,11 @@ class MainWindow(QMainWindow):
         self._tile_w_combo.setCurrentText("1088")
         self._tile_h_combo.setCurrentText("1920")
 
+        # Batch size input (num_streams for Backend.TRT)
+        self._batch_size_edit = QLineEdit("1")
+        self._batch_size_edit.setFixedWidth(50)
+        self._batch_size_edit.setToolTip("num_streams for TensorRT backend")
+
         # Checkboxes
         self._same_dir_check = QCheckBox("Save next to input with suffix:")
         self._same_dir_suffix_edit = QLineEdit("_upscaled")
@@ -264,11 +265,17 @@ class MainWindow(QMainWindow):
         # Tile group
         tile_box = QGroupBox("Tile")
         tile_layout = QHBoxLayout()
+        tile_layout.setSpacing(4)
         tile_box.setLayout(tile_layout)
         tile_layout.addWidget(QLabel("Width:"))
         tile_layout.addWidget(self._tile_w_combo)
+        tile_layout.addSpacing(10)
         tile_layout.addWidget(QLabel("Height:"))
         tile_layout.addWidget(self._tile_h_combo)
+        tile_layout.addSpacing(10)
+        tile_layout.addWidget(QLabel("Batch size:"))
+        tile_layout.addWidget(self._batch_size_edit)
+        tile_layout.addStretch()
         main_layout.addWidget(tile_box, row, 0, 1, 4)
         row += 1
 
@@ -398,6 +405,7 @@ class MainWindow(QMainWindow):
         self._fp16_check.setChecked(config.use_fp16)
         self._bf16_check.setChecked(config.use_bf16)
         self._tf32_check.setChecked(config.use_tf32)
+        self._batch_size_edit.setText(str(config.num_streams))
 
         if config.input_path:
             p = Path(config.input_path)
@@ -447,6 +455,7 @@ class MainWindow(QMainWindow):
             use_fp16=self._fp16_check.isChecked(),
             use_bf16=self._bf16_check.isChecked(),
             use_tf32=self._tf32_check.isChecked(),
+            num_streams=self._parse_batch_size(self._batch_size_edit.text()),
             input_path=first_input,
             custom_res_enabled=self._custom_res_enabled,
             custom_res_width=self._custom_res_width,
@@ -854,8 +863,9 @@ class MainWindow(QMainWindow):
         # 3. Otherwise use empty string (system default)
         start_dir = ""
         try:
-            if self._config.last_onnx_browse_dir:
-                last_dir = Path(self._config.last_onnx_browse_dir)
+            config = Config.load()
+            if config.last_onnx_browse_dir:
+                last_dir = Path(config.last_onnx_browse_dir)
                 if last_dir.is_dir():
                     start_dir = str(last_dir)
         except Exception:
@@ -882,8 +892,9 @@ class MainWindow(QMainWindow):
             self._detect_or_ask_model_scale(file_path)
             # Save the directory for next time
             try:
-                self._config.last_onnx_browse_dir = str(Path(file_path).parent)
-                self._config.save()
+                config = Config.load()
+                config.last_onnx_browse_dir = str(Path(file_path).parent)
+                config.save()
             except Exception:
                 pass
 
@@ -1049,6 +1060,13 @@ class MainWindow(QMainWindow):
         except ValueError:
             return default
 
+    def _parse_batch_size(self, text: str) -> int:
+        """Parse batch size (num_streams) value."""
+        try:
+            return max(1, int(text.strip()))
+        except ValueError:
+            return 1
+
     def _validate_tile_value(self, text: str, name: str) -> int | None:
         """Validate that a tile value is a positive multiple of 64."""
         try:
@@ -1203,6 +1221,7 @@ class MainWindow(QMainWindow):
             use_fp16=self._fp16_check.isChecked(),
             use_bf16=self._bf16_check.isChecked(),
             use_tf32=self._tf32_check.isChecked(),
+            num_streams=self._parse_batch_size(self._batch_size_edit.text()),
             use_alpha=self._alpha_check.isChecked(),
             append_model_suffix_enabled=self._append_model_suffix_check.isChecked(),
             prescale_enabled=self._prescale_enabled,

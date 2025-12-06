@@ -9,7 +9,6 @@ from __future__ import annotations
 import gc
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 # These imports are heavy and only loaded in worker mode
 import vsmlrt
@@ -21,9 +20,6 @@ from vssource import BestSource
 from ..core.utils import compute_padding
 from ..core.constants import PADDING_ALIGNMENT, SUPPORTED_IMAGE_EXTENSIONS
 from .settings import WorkerSettings
-
-if TYPE_CHECKING:
-    pass
 
 # Global for timing from source creation onward
 _process_start_time: float | None = None
@@ -52,6 +48,7 @@ def _build_backend(settings: WorkerSettings) -> Backend:
         fp16=settings.use_fp16,
         bf16=settings.use_bf16,
         tf32=settings.use_tf32,
+        num_streams=settings.num_streams,
         static_shape=False,
         builder_optimization_level=5,
         min_shapes=[64, 64],

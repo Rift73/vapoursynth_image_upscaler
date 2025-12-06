@@ -44,6 +44,7 @@ class Config:
     use_fp16: bool = False
     use_bf16: bool = True
     use_tf32: bool = False
+    num_streams: int = 1  # num_streams for Backend.TRT
 
     # Output options
     same_dir: bool = False
@@ -112,6 +113,7 @@ class Config:
                 config.use_fp16 = _read_reg_bool(key, "use_fp16", config.use_fp16)
                 config.use_bf16 = _read_reg_bool(key, "use_bf16", config.use_bf16)
                 config.use_tf32 = _read_reg_bool(key, "use_tf32", config.use_tf32)
+                config.num_streams = _read_reg_int(key, "num_streams", config.num_streams)
 
                 config.same_dir = _read_reg_bool(key, "same_dir", config.same_dir)
                 config.same_dir_suffix = _read_reg_str(key, "same_dir_suffix", config.same_dir_suffix)
@@ -170,6 +172,7 @@ class Config:
                 _write_reg_bool(key, "use_fp16", self.use_fp16)
                 _write_reg_bool(key, "use_bf16", self.use_bf16)
                 _write_reg_bool(key, "use_tf32", self.use_tf32)
+                _write_reg_int(key, "num_streams", self.num_streams)
 
                 _write_reg_bool(key, "same_dir", self.same_dir)
                 _write_reg_str(key, "same_dir_suffix", self.same_dir_suffix)

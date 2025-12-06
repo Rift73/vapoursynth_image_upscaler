@@ -10,15 +10,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QThread, Signal
 
 from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS, WORKER_TMP_ROOT
 from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps
-
-if TYPE_CHECKING:
-    pass
 
 # Extensions eligible for batch processing (static images only)
 BATCH_ELIGIBLE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -68,7 +64,8 @@ class UpscaleWorkerThread(QThread):
         use_fp16: bool,
         use_bf16: bool,
         use_tf32: bool,
-        use_alpha: bool,
+        num_streams: int = 1,
+        use_alpha: bool = False,
         append_model_suffix_enabled: bool = False,
         prescale_enabled: bool = False,
         prescale_mode: str = "width",
@@ -108,6 +105,7 @@ class UpscaleWorkerThread(QThread):
         self.use_fp16 = use_fp16
         self.use_bf16 = use_bf16
         self.use_tf32 = use_tf32
+        self.num_streams = num_streams
         self.use_alpha = use_alpha
         self.append_model_suffix_enabled = append_model_suffix_enabled
         self.prescale_enabled = prescale_enabled
@@ -544,6 +542,7 @@ class UpscaleWorkerThread(QThread):
         env["USE_FP16"] = "1" if self.use_fp16 else "0"
         env["USE_BF16"] = "1" if self.use_bf16 else "0"
         env["USE_TF32"] = "1" if self.use_tf32 else "0"
+        env["NUM_STREAMS"] = str(self.num_streams)
         env["USE_SAME_DIR_OUTPUT"] = "1" if self.same_dir_enabled else "0"
         env["SAME_DIR_SUFFIX"] = self.same_dir_suffix
         env["MANGA_FOLDER_ENABLED"] = "1" if self.manga_folder_enabled else "0"
