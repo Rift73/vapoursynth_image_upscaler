@@ -92,6 +92,26 @@ class WorkerSettings:
     # Input frame rate (for animated GIF output)
     input_fps: float  # frames per second, 0.0 for images
 
+    # Animated output settings
+    animated_output_format: str  # "GIF", "WebP", "AVIF", or "APNG"
+    # GIF settings (gifski)
+    gif_quality: int  # 1-100 (quality, lower = smaller file)
+    gif_fast: bool  # --fast mode (50% faster, 10% worse quality)
+    # WebP settings (FFmpeg libwebp)
+    webp_quality: int  # 0-100
+    webp_lossless: bool
+    webp_preset: str  # "none", "default", "picture", etc.
+    # AVIF settings (avifenc)
+    avif_quality: int  # 0-100 (color quality)
+    avif_quality_alpha: int  # 0-100 (alpha quality)
+    avif_speed: int  # 0-10 (0=slowest/best, 10=fastest)
+    avif_lossless: bool
+    # APNG settings (FFmpeg apng encoder)
+    apng_pred: str  # "none", "sub", "up", "avg", "paeth", "mixed"
+
+    # Upscale toggle - when False, skips SR upscaling and only applies resolution/alpha
+    upscale_enabled: bool
+
     @classmethod
     def from_environment(cls) -> WorkerSettings:
         """Create WorkerSettings by reading environment variables."""
@@ -138,6 +158,18 @@ class WorkerSettings:
             input_extension=get_env_str("INPUT_EXTENSION", ".png"),
             input_duration=get_env_float("INPUT_DURATION", 0.0),
             input_fps=get_env_float("INPUT_FPS", 0.0),
+            animated_output_format=get_env_str("ANIMATED_OUTPUT_FORMAT", "GIF"),
+            gif_quality=get_env_int("GIF_QUALITY", 90),
+            gif_fast=get_env_bool("GIF_FAST", False),
+            webp_quality=get_env_int("WEBP_QUALITY", 90),
+            webp_lossless=get_env_bool("WEBP_LOSSLESS", True),
+            webp_preset=get_env_str("WEBP_PRESET", "none"),
+            avif_quality=get_env_int("AVIF_QUALITY", 80),
+            avif_quality_alpha=get_env_int("AVIF_QUALITY_ALPHA", 90),
+            avif_speed=get_env_int("AVIF_SPEED", 6),
+            avif_lossless=get_env_bool("AVIF_LOSSLESS", False),
+            apng_pred=get_env_str("APNG_PRED", "mixed"),
+            upscale_enabled=get_env_bool("UPSCALE_ENABLED", True),
         )
 
     def get_model_suffix(self) -> str:

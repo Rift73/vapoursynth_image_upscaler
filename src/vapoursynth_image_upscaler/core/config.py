@@ -81,11 +81,31 @@ class Config:
     sharpen_enabled: bool = False
     sharpen_value: float = 0.5  # 0.0 to 1.0
 
+    # Animated output settings (for GIF/video inputs)
+    animated_output_format: str = "GIF"  # "GIF", "WebP", "AVIF", or "APNG"
+    # GIF settings (gifski)
+    gif_quality: int = 90  # 1-100 (quality, lower = smaller file)
+    gif_fast: bool = False  # --fast mode (50% faster, 10% worse quality)
+    # WebP settings (FFmpeg libwebp)
+    webp_quality: int = 90  # 0-100
+    webp_lossless: bool = True
+    webp_preset: str = "none"  # "none", "default", "picture", "photo", "drawing", "icon", "text"
+    # AVIF settings (avifenc)
+    avif_quality: int = 80  # 0-100 (color quality)
+    avif_quality_alpha: int = 90  # 0-100 (alpha quality)
+    avif_speed: int = 6  # 0-10 (0=slowest/best, 10=fastest)
+    avif_lossless: bool = False
+    # APNG settings (FFmpeg apng encoder)
+    apng_pred: str = "mixed"  # "none", "sub", "up", "avg", "paeth", "mixed"
+
     # Last used input path (for convenience on restart)
     input_path: str = ""
 
     # Last used ONNX browse directory (for file browser persistence)
     last_onnx_browse_dir: str = ""
+
+    # UI theme selection
+    theme: str = "Dark"  # "Dark" or "Holo"
 
     @classmethod
     def load(cls) -> Config:
@@ -145,8 +165,22 @@ class Config:
                 config.sharpen_enabled = _read_reg_bool(key, "sharpen_enabled", config.sharpen_enabled)
                 config.sharpen_value = _read_reg_float(key, "sharpen_value", config.sharpen_value)
 
+                config.animated_output_format = _read_reg_str(key, "animated_output_format", config.animated_output_format)
+                config.gif_quality = _read_reg_int(key, "gif_quality", config.gif_quality)
+                config.gif_fast = _read_reg_bool(key, "gif_fast", config.gif_fast)
+                config.webp_quality = _read_reg_int(key, "webp_quality", config.webp_quality)
+                config.webp_lossless = _read_reg_bool(key, "webp_lossless", config.webp_lossless)
+                config.webp_preset = _read_reg_str(key, "webp_preset", config.webp_preset)
+                config.avif_quality = _read_reg_int(key, "avif_quality", config.avif_quality)
+                config.avif_quality_alpha = _read_reg_int(key, "avif_quality_alpha", config.avif_quality_alpha)
+                config.avif_speed = _read_reg_int(key, "avif_speed", config.avif_speed)
+                config.avif_lossless = _read_reg_bool(key, "avif_lossless", config.avif_lossless)
+                config.apng_pred = _read_reg_str(key, "apng_pred", config.apng_pred)
+
                 config.input_path = _read_reg_str(key, "input_path", config.input_path)
                 config.last_onnx_browse_dir = _read_reg_str(key, "last_onnx_browse_dir", config.last_onnx_browse_dir)
+
+                config.theme = _read_reg_str(key, "theme", config.theme)
 
         except FileNotFoundError:
             # Registry key doesn't exist yet, use defaults
@@ -204,8 +238,22 @@ class Config:
                 _write_reg_bool(key, "sharpen_enabled", self.sharpen_enabled)
                 _write_reg_float(key, "sharpen_value", self.sharpen_value)
 
+                _write_reg_str(key, "animated_output_format", self.animated_output_format)
+                _write_reg_int(key, "gif_quality", self.gif_quality)
+                _write_reg_bool(key, "gif_fast", self.gif_fast)
+                _write_reg_int(key, "webp_quality", self.webp_quality)
+                _write_reg_bool(key, "webp_lossless", self.webp_lossless)
+                _write_reg_str(key, "webp_preset", self.webp_preset)
+                _write_reg_int(key, "avif_quality", self.avif_quality)
+                _write_reg_int(key, "avif_quality_alpha", self.avif_quality_alpha)
+                _write_reg_int(key, "avif_speed", self.avif_speed)
+                _write_reg_bool(key, "avif_lossless", self.avif_lossless)
+                _write_reg_str(key, "apng_pred", self.apng_pred)
+
                 _write_reg_str(key, "input_path", self.input_path)
                 _write_reg_str(key, "last_onnx_browse_dir", self.last_onnx_browse_dir)
+
+                _write_reg_str(key, "theme", self.theme)
 
         except OSError:
             # Failed to write to registry, silently ignore

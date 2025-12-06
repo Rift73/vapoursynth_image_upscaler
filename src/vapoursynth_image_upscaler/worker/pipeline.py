@@ -176,6 +176,79 @@ def build_alpha_from_arrays(
     return clip
 
 
+def load_alpha_from_arrays_no_upscale(
+    alpha_arrays: list,
+    settings: WorkerSettings,
+    target_width: int = 0,
+    target_height: int = 0,
+) -> vs.VideoNode:
+    """
+    Load alpha clip from numpy arrays without SR upscaling.
+
+    Used when upscale is disabled but alpha processing is still needed.
+
+    Args:
+        alpha_arrays: List of numpy arrays (H, W) as uint8 representing alpha masks.
+        settings: Worker settings from environment.
+        target_width: Target output width (to match color frames). 0 = auto.
+        target_height: Target output height (to match color frames). 0 = auto.
+
+    Returns:
+        GRAY8 alpha clip (not upscaled).
+    """
+    import numpy as np
+
+    if not alpha_arrays:
+        raise ValueError("No alpha arrays provided")
+
+    height, width = alpha_arrays[0].shape
+    num_frames = len(alpha_arrays)
+
+    # Create a blank clip with the right dimensions
+    blank = core.std.BlankClip(
+        width=width,
+        height=height,
+        format=vs.GRAY8,
+        length=num_frames,
+    )
+
+    # Make deep copies of the arrays to ensure they persist
+    _alpha_arrays_copy = [arr.copy() for arr in alpha_arrays]
+
+    # Define a frame modifier function to inject our alpha data
+    class AlphaInjector:
+        def __init__(self, arrays: list):
+            self.arrays = arrays
+
+        def __call__(self, n: int, f: vs.VideoFrame) -> vs.VideoFrame:
+            fout = f.copy()
+            alpha_data = self.arrays[n]
+            np.copyto(np.asarray(fout[0]), alpha_data)
+            return fout
+
+    injector = AlphaInjector(_alpha_arrays_copy)
+
+    # Apply the modifier
+    clip = core.std.ModifyFrame(blank, blank, injector)
+
+    # Resize to match target dimensions if specified (to match color output)
+    if target_width > 0 and target_height > 0:
+        if clip.width != target_width or clip.height != target_height:
+            kernel = _get_kernel(settings.custom_res_kernel)
+            clip = depth(clip, 32)
+            clip = kernel.scale(clip, target_width, target_height, linear=True)
+            # Convert back to GRAY8
+            clip = core.resize.Bicubic(
+                clip,
+                format=vs.GRAY8,
+                matrix=1,
+                range_in=1,
+                range=1,
+            )
+
+    return clip
+
+
 def compute_prescale_dimensions(
     source_width: int,
     source_height: int,
@@ -380,6 +453,123 @@ def build_clip_with_frame_selection(
     )
 
     return clip
+
+
+def load_clip_no_upscale(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
+    """
+    Load a clip without applying SR upscaling.
+
+    Used when upscale is disabled - just loads the source and converts to RGBS.
+
+    Args:
+        input_path: Path to the input image/video file.
+        settings: Worker settings from environment.
+
+    Returns:
+        Loaded clip in RGBS format (no upscaling applied).
+    """
+    global _process_start_time
+    _process_start_time = time.perf_counter()
+
+    ext = input_path.suffix.lower()
+    img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+    if ext in img_exts:
+        src = core.imwri.Read(str(input_path))
+    else:
+        src = BestSource.source(str(input_path))
+
+    clip = initialize_clip(src)
+
+    # Convert to RGBS (32-bit float RGB)
+    clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in=0, transfer_in=13, primaries_in=1, range_in=1, range=1)
+
+    return clip
+
+
+def load_clip_no_upscale_with_frame_selection(
+    input_path: Path,
+    settings: WorkerSettings,
+    frame_indices: list[int],
+) -> vs.VideoNode:
+    """
+    Load a clip with specific frame selection but without SR upscaling.
+
+    Used for GIF deduplication when upscale is disabled.
+
+    Args:
+        input_path: Path to the input image/video file.
+        settings: Worker settings from environment.
+        frame_indices: List of frame indices to include in the output.
+
+    Returns:
+        Loaded clip with only the selected frames in RGBS format.
+    """
+    global _process_start_time
+    _process_start_time = time.perf_counter()
+
+    ext = input_path.suffix.lower()
+    img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
+
+    if ext in img_exts:
+        src = core.imwri.Read(str(input_path))
+    else:
+        src = BestSource.source(str(input_path))
+
+    clip = initialize_clip(src)
+
+    # Select only the specified frames
+    if frame_indices and len(frame_indices) < len(clip):
+        selected_frames = [clip[i] for i in frame_indices if i < len(clip)]
+        if selected_frames:
+            clip = core.std.Splice(selected_frames)
+
+    # Convert to RGBS (32-bit float RGB)
+    clip = core.resize.Bicubic(clip, format=vs.RGBS, matrix_in=0, transfer_in=13, primaries_in=1, range_in=1, range=1)
+
+    return clip
+
+
+def load_alpha_no_upscale(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
+    """
+    Load alpha channel from an image without SR upscaling.
+
+    Used when upscale is disabled but alpha is still needed.
+
+    Args:
+        input_path: Path to the input file with alpha channel.
+        settings: Worker settings from environment.
+
+    Returns:
+        GRAY8 alpha clip (not upscaled).
+    """
+    global _process_start_time
+    _process_start_time = time.perf_counter()
+
+    ext = input_path.suffix.lower()
+    if ext == ".png":
+        src = core.imwri.Read(str(input_path), alpha=True)
+    elif ext in {".webp", ".gif"}:
+        src = BestSource.source(str(input_path))
+    else:
+        raise ValueError("Alpha workflow only supports PNG / GIF / WEBP inputs")
+
+    clip = initialize_clip(src)
+
+    # Extract alpha from frame properties
+    alpha = core.std.PropToClip(clip)
+
+    # Convert to GRAY8
+    alpha = core.resize.Bicubic(
+        alpha,
+        format=vs.GRAY8,
+        transfer_in=13,
+        primaries_in=1,
+        range_in=1,
+        range=1,
+    )
+
+    return alpha
 
 
 def build_alpha_hq(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:

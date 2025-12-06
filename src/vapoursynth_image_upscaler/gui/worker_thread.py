@@ -75,11 +75,35 @@ class UpscaleWorkerThread(QThread):
         sharpen_enabled: bool = False,
         sharpen_value: float = 0.5,
         use_batch_mode: bool = False,
+        animated_output_format: str = "GIF",
+        gif_quality: int = 90,
+        gif_fast: bool = False,
+        webp_quality: int = 90,
+        webp_lossless: bool = True,
+        webp_preset: str = "none",
+        avif_quality: int = 80,
+        avif_quality_alpha: int = 90,
+        avif_speed: int = 6,
+        avif_lossless: bool = False,
+        apng_pred: str = "mixed",
+        upscale_enabled: bool = True,
         parent=None,
     ):
         super().__init__(parent)
         self.files = files
         self.use_batch_mode = use_batch_mode
+        self.animated_output_format = animated_output_format
+        self.gif_quality = gif_quality
+        self.gif_fast = gif_fast
+        self.webp_quality = webp_quality
+        self.webp_lossless = webp_lossless
+        self.webp_preset = webp_preset
+        self.avif_quality = avif_quality
+        self.avif_quality_alpha = avif_quality_alpha
+        self.avif_speed = avif_speed
+        self.avif_lossless = avif_lossless
+        self.apng_pred = apng_pred
+        self.upscale_enabled = upscale_enabled
         self.output_dir = output_dir
         self.secondary_output_dir = secondary_output_dir
         self.single_input_is_file = single_input_is_file
@@ -568,6 +592,18 @@ class UpscaleWorkerThread(QThread):
         env["INPUT_EXTENSION"] = input_ext
         env["INPUT_DURATION"] = str(input_duration)
         env["INPUT_FPS"] = str(input_fps)
+        env["ANIMATED_OUTPUT_FORMAT"] = self.animated_output_format
+        env["GIF_QUALITY"] = str(self.gif_quality)
+        env["GIF_FAST"] = "1" if self.gif_fast else "0"
+        env["WEBP_QUALITY"] = str(self.webp_quality)
+        env["WEBP_LOSSLESS"] = "1" if self.webp_lossless else "0"
+        env["WEBP_PRESET"] = self.webp_preset
+        env["AVIF_QUALITY"] = str(self.avif_quality)
+        env["AVIF_QUALITY_ALPHA"] = str(self.avif_quality_alpha)
+        env["AVIF_SPEED"] = str(self.avif_speed)
+        env["AVIF_LOSSLESS"] = "1" if self.avif_lossless else "0"
+        env["APNG_PRED"] = self.apng_pred
+        env["UPSCALE_ENABLED"] = "1" if self.upscale_enabled else "0"
         return env
 
     def _run_worker(

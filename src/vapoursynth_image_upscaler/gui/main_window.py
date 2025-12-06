@@ -4,10 +4,18 @@ Main application window for VapourSynth Image Upscaler.
 
 from __future__ import annotations
 
+import ctypes
 import os
 import re
+import sys
 import time
 from pathlib import Path
+
+# Set Windows AppUserModelID for proper taskbar grouping/pinning
+# Must be called before QApplication is created
+if sys.platform == "win32":
+    APP_ID = "VapourSynthImageUpscaler.GUI.1.0"
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_ID)
 from urllib.parse import urlparse
 from urllib.request import urlretrieve, Request, urlopen
 
@@ -28,7 +36,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
 )
-from PySide6.QtGui import QPixmap, QGuiApplication, QDragEnterEvent, QDropEvent, QImage
+from PySide6.QtGui import QPixmap, QGuiApplication, QDragEnterEvent, QDropEvent, QImage, QIcon
 from PySide6.QtCore import Qt, QSize, QEvent, QTimer, Slot
 
 from ..core.constants import (
@@ -37,11 +45,38 @@ from ..core.constants import (
     VALID_MODEL_SCALES,
     DEFAULT_OUTPUT_PATH,
     DEFAULT_ONNX_PATH,
+    TEMP_BASE,
 )
 from ..core.config import Config
 from ..core.utils import cleanup_gui_input_tmp, format_time_hms
-from .dialogs import CustomResolutionDialog
+from .dialogs import CustomResolutionDialog, AnimatedOutputDialog
 from .worker_thread import UpscaleWorkerThread, ClipboardWorkerThread
+from .theme import ThemeManager, AVAILABLE_THEMES
+
+# Icon path - check multiple locations for PyInstaller compatibility
+def _get_icon_path() -> Path | None:
+    """Get icon path, checking multiple locations for PyInstaller compatibility."""
+    # Check relative to this file (development)
+    dev_path = Path(__file__).parent.parent.parent.parent / "icon.png"
+    if dev_path.exists():
+        return dev_path
+    # Check next to exe (PyInstaller onefile)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        for name in ("icon.png", "icon.ico"):
+            icon_path = exe_dir / name
+            if icon_path.exists():
+                return icon_path
+        # Check _MEIPASS (PyInstaller temp folder)
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            for name in ("icon.png", "icon.ico"):
+                icon_path = Path(meipass) / name
+                if icon_path.exists():
+                    return icon_path
+    return None
+
+_ICON_PATH = _get_icon_path()
 
 
 def _natural_sort_key(path: Path) -> list:
@@ -109,6 +144,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("VapourSynth Upscaler (vsmlrt SR)")
 
+        # Set window icon
+        if _ICON_PATH and _ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(_ICON_PATH)))
+
         # State
         self._input_items: list[Path] = []
         self._output_path: Path | None = None
@@ -142,6 +181,23 @@ class MainWindow(QMainWindow):
         self._prescale_width = 1920
         self._prescale_height = 1080
         self._prescale_kernel = "lanczos"
+
+        # Animated output state
+        self._animated_output_format = "GIF"
+        # GIF settings (gifski)
+        self._gif_quality = 90
+        self._gif_fast = False
+        # WebP settings
+        self._webp_quality = 90
+        self._webp_lossless = True
+        self._webp_preset = "none"
+        # AVIF settings
+        self._avif_quality = 80
+        self._avif_quality_alpha = 90
+        self._avif_speed = 6
+        self._avif_lossless = False
+        # APNG settings
+        self._apng_pred = "mixed"
 
         # Model scale (auto-detected from ONNX filename or user-selected)
         self._model_scale: int = 4
@@ -234,12 +290,25 @@ class MainWindow(QMainWindow):
         self._btn_out = QPushButton("Browse")
         self._btn_clear_output = QPushButton("Clear")
         self._btn_onnx = QPushButton("Browse ONNX")
+        self._upscale_check = QCheckBox("Upscale")
+        self._upscale_check.setChecked(True)  # Always default to enabled
+        self._upscale_check.setToolTip("Enable SR upscaling. When disabled, only applies resolution/alpha processing.")
         self._start_button = QPushButton("Start")
         self._cancel_button = QPushButton("Cancel")
         self._cancel_button.setEnabled(False)
         self._clipboard_button = QPushButton("To Clipboard")
         self._clipboard_button.setToolTip("Upscale and copy result to clipboard (single image only)")
+        self._open_log_button = QPushButton("Open Log")
+        self._open_log_button.setToolTip("Open the worker debug log file")
         self._custom_res_button = QPushButton("Resolution")
+        self._animated_output_button = QPushButton("Animated Output")
+        self._animated_output_button.setToolTip("Configure output format for animated content (GIF, WebP, AVIF)")
+
+        # Theme dropdown
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItems(AVAILABLE_THEMES)
+        self._theme_combo.setToolTip("Select UI theme")
+        self._theme_combo.setFixedWidth(80)
 
     def _build_ui(self) -> None:
         """Build the main UI layout."""
@@ -277,6 +346,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(QLabel("ONNX Model:"), row, 0)
         main_layout.addWidget(self._onnx_edit, row, 1)
         main_layout.addWidget(self._btn_onnx, row, 2)
+        main_layout.addWidget(self._upscale_check, row, 3)
         row += 1
 
         # Tile group
@@ -342,6 +412,7 @@ class MainWindow(QMainWindow):
         opts_layout.addWidget(self._batch_mode_check)
         opts_layout.addWidget(self._append_model_suffix_check)
         opts_layout.addWidget(self._custom_res_button)
+        opts_layout.addWidget(self._animated_output_button)
         opts_layout.addStretch()
         main_layout.addWidget(opts_container, row, 0, 1, 4)
         row += 1
@@ -366,13 +437,16 @@ class MainWindow(QMainWindow):
         thumb_layout.addWidget(self._image_info_label)
         main_layout.addWidget(thumb_box, 0, 4, row, 1)
 
-        # Buttons at bottom (Start=2/5, Cancel=2/5, To Clipboard=1/5)
+        # Buttons at bottom (Start=2/5, Cancel=2/5, To Clipboard=1/5, Open Log=1/5, Theme)
         btn_layout = QHBoxLayout()
         btn_container = QWidget()
         btn_container.setLayout(btn_layout)
         btn_layout.addWidget(self._start_button, 2)
         btn_layout.addWidget(self._cancel_button, 2)
         btn_layout.addWidget(self._clipboard_button, 1)
+        btn_layout.addWidget(self._open_log_button, 1)
+        btn_layout.addWidget(QLabel("Theme:"))
+        btn_layout.addWidget(self._theme_combo)
         main_layout.addWidget(btn_container, row, 0, 1, 5)
 
         self.resize(1150, 680)
@@ -387,9 +461,13 @@ class MainWindow(QMainWindow):
         self._start_button.clicked.connect(self._on_start_clicked)
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
         self._clipboard_button.clicked.connect(self._on_clipboard_clicked)
+        self._open_log_button.clicked.connect(self._on_open_log_clicked)
         self._custom_res_button.clicked.connect(self._open_custom_res_dialog)
+        self._animated_output_button.clicked.connect(self._open_animated_output_dialog)
         self._sharpen_check.toggled.connect(self._on_sharpen_toggled)
         self._manga_folder_check.toggled.connect(self._on_manga_folder_toggled)
+        self._upscale_check.toggled.connect(self._on_upscale_toggled)
+        self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
 
     # ========== Settings Persistence ==========
 
@@ -453,6 +531,26 @@ class MainWindow(QMainWindow):
         self._sharpen_value_edit.setText(f"{config.sharpen_value:.2f}")
         self._sharpen_value_edit.setEnabled(config.sharpen_enabled)
 
+        # Load animated output settings
+        self._animated_output_format = config.animated_output_format
+        self._gif_quality = config.gif_quality
+        self._gif_fast = config.gif_fast
+        self._webp_quality = config.webp_quality
+        self._webp_lossless = config.webp_lossless
+        self._webp_preset = config.webp_preset
+        self._avif_quality = config.avif_quality
+        self._avif_quality_alpha = config.avif_quality_alpha
+        self._avif_speed = config.avif_speed
+        self._avif_lossless = config.avif_lossless
+        self._apng_pred = config.apng_pred
+
+        # Load theme and apply (without triggering save)
+        if config.theme in AVAILABLE_THEMES:
+            self._theme_combo.blockSignals(True)
+            self._theme_combo.setCurrentText(config.theme)
+            self._theme_combo.blockSignals(False)
+            ThemeManager.apply_theme(config.theme)
+
     def _save_settings(self) -> None:
         """Save current settings to config file."""
         first_input = str(self._input_items[0]) if self._input_items else ""
@@ -492,6 +590,18 @@ class MainWindow(QMainWindow):
             prescale_kernel=self._prescale_kernel,
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
+            animated_output_format=self._animated_output_format,
+            gif_quality=self._gif_quality,
+            gif_fast=self._gif_fast,
+            webp_quality=self._webp_quality,
+            webp_lossless=self._webp_lossless,
+            webp_preset=self._webp_preset,
+            avif_quality=self._avif_quality,
+            avif_quality_alpha=self._avif_quality_alpha,
+            avif_speed=self._avif_speed,
+            avif_lossless=self._avif_lossless,
+            apng_pred=self._apng_pred,
+            theme=self._theme_combo.currentText(),
         )
         config.save()
 
@@ -506,6 +616,19 @@ class MainWindow(QMainWindow):
             self._same_dir_check.setEnabled(False)
         else:
             self._same_dir_check.setEnabled(True)
+
+    def _on_upscale_toggled(self, checked: bool) -> None:
+        """Handle upscale checkbox toggle - disables pre-scale when upscaling is disabled."""
+        # Pre-scale only makes sense when upscaling is enabled
+        # When upscale is disabled, pre-scale should be greyed out
+        # Note: The actual prescale_enabled state is managed in the Resolution dialog
+        # Here we just visually indicate that pre-scale won't work without upscaling
+        pass  # The Resolution dialog will check upscale state when opened
+
+    def _on_theme_changed(self, theme_name: str) -> None:
+        """Handle theme dropdown change."""
+        ThemeManager.apply_theme(theme_name)
+        self._save_settings()
 
     def _get_sharpen_value(self) -> float:
         """Get the current sharpen value from the text field."""
@@ -1048,6 +1171,7 @@ class MainWindow(QMainWindow):
             prescale_width=self._prescale_width,
             prescale_height=self._prescale_height,
             prescale_kernel=self._prescale_kernel,
+            upscale_enabled=self._upscale_check.isChecked(),
         )
         if dlg.exec() == QDialog.Accepted:
             settings = dlg.get_settings()
@@ -1067,6 +1191,65 @@ class MainWindow(QMainWindow):
             self._prescale_width = settings.prescale_width
             self._prescale_height = settings.prescale_height
             self._prescale_kernel = settings.prescale_kernel
+
+    # ========== Animated Output Dialog ==========
+
+    def _open_animated_output_dialog(self) -> None:
+        """Open the animated output settings dialog."""
+        try:
+            dlg = AnimatedOutputDialog(
+                self,
+                output_format=self._animated_output_format,
+                gif_quality=self._gif_quality,
+                gif_fast=self._gif_fast,
+                webp_quality=self._webp_quality,
+                webp_lossless=self._webp_lossless,
+                webp_preset=self._webp_preset,
+                avif_quality=self._avif_quality,
+                avif_quality_alpha=self._avif_quality_alpha,
+                avif_speed=self._avif_speed,
+                avif_lossless=self._avif_lossless,
+                apng_pred=self._apng_pred,
+            )
+            if dlg.exec() == QDialog.Accepted:
+                settings = dlg.get_settings()
+                self._animated_output_format = settings.output_format
+                self._gif_quality = settings.gif_quality
+                self._gif_fast = settings.gif_fast
+                self._webp_quality = settings.webp_quality
+                self._webp_lossless = settings.webp_lossless
+                self._webp_preset = settings.webp_preset
+                self._avif_quality = settings.avif_quality
+                self._avif_quality_alpha = settings.avif_quality_alpha
+                self._avif_speed = settings.avif_speed
+                self._avif_lossless = settings.avif_lossless
+                self._apng_pred = settings.apng_pred
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Error", f"Failed to open dialog: {e}\n\n{traceback.format_exc()}")
+
+    # ========== Log File ==========
+
+    def _on_open_log_clicked(self) -> None:
+        """Open the worker debug log file in the default text editor."""
+        log_file = TEMP_BASE / "worker_debug.log"
+        if not log_file.exists():
+            QMessageBox.information(
+                self,
+                "Log File",
+                f"Log file does not exist yet.\nIt will be created after the first processing run.\n\nPath: {log_file}",
+            )
+            return
+
+        # Open the log file with the system default application
+        try:
+            os.startfile(str(log_file))
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"Could not open log file:\n{e}\n\nPath: {log_file}",
+            )
 
     # ========== Validation ==========
 
@@ -1114,21 +1297,28 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", "Please select at least one input file or folder.")
             return
 
+        # Only validate ONNX and tile settings when upscaling is enabled
+        upscale_enabled = self._upscale_check.isChecked()
         onnx_str = self._onnx_edit.text().strip()
-        if not onnx_str:
-            QMessageBox.critical(self, "Error", "Please select an ONNX model.")
-            return
-        if not Path(onnx_str).exists():
-            QMessageBox.critical(self, "Error", f"ONNX model does not exist:\n{onnx_str}")
-            return
+        if upscale_enabled:
+            if not onnx_str:
+                QMessageBox.critical(self, "Error", "Please select an ONNX model.")
+                return
+            if not Path(onnx_str).exists():
+                QMessageBox.critical(self, "Error", f"ONNX model does not exist:\n{onnx_str}")
+                return
 
-        # Validate tile sizes
-        tile_w = self._validate_tile_value(self._tile_w_combo.currentText(), "Tile W")
-        if tile_w is None:
-            return
-        tile_h = self._validate_tile_value(self._tile_h_combo.currentText(), "Tile H")
-        if tile_h is None:
-            return
+            # Validate tile sizes
+            tile_w = self._validate_tile_value(self._tile_w_combo.currentText(), "Tile W")
+            if tile_w is None:
+                return
+            tile_h = self._validate_tile_value(self._tile_h_combo.currentText(), "Tile H")
+            if tile_h is None:
+                return
+        else:
+            # When upscaling is disabled, use default tile values (they won't be used anyway)
+            tile_w = 1088
+            tile_h = 1920
 
         # Use the auto-detected or user-selected model scale
         model_scale = self._model_scale
@@ -1249,6 +1439,18 @@ class MainWindow(QMainWindow):
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
             use_batch_mode=self._batch_mode_check.isChecked(),
+            animated_output_format=self._animated_output_format,
+            gif_quality=self._gif_quality,
+            gif_fast=self._gif_fast,
+            webp_quality=self._webp_quality,
+            webp_lossless=self._webp_lossless,
+            webp_preset=self._webp_preset,
+            avif_quality=self._avif_quality,
+            avif_quality_alpha=self._avif_quality_alpha,
+            avif_speed=self._avif_speed,
+            avif_lossless=self._avif_lossless,
+            apng_pred=self._apng_pred,
+            upscale_enabled=self._upscale_check.isChecked(),
         )
         self._worker_thread.progress_signal.connect(self._on_progress_update)
         self._worker_thread.thumbnail_signal.connect(self._on_thumbnail_update)
