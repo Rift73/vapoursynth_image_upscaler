@@ -3,16 +3,19 @@
 PyInstaller spec file for VapourSynth Image Upscaler.
 
 Build commands:
-    # Standard build (folder with exe + dependencies)
+    # Standard build (single exe)
     pyinstaller vapoursynth_upscaler.spec
 
-    # Or use one of these shortcuts:
+    # Clean build (removes previous build artifacts)
     pyinstaller vapoursynth_upscaler.spec --clean
 
 Notes:
     - VapourSynth must be installed separately (cannot be bundled)
     - ONNX models must be provided separately
-    - External tools (gifski, ffmpeg, avifenc) must be in PATH
+    - Use the Dependencies button in the app to install:
+      * VapourSynth plugins (to %APPDATA%/Vapoursynth/plugins64)
+      * External tools: gifski, ffmpeg, avifenc (to %APPDATA%/vapoursynth-image-upscaler-GUI)
+    - 7-Zip is required for extracting .7z plugin archives
 """
 
 import sys
@@ -50,6 +53,7 @@ hiddenimports = [
     "vapoursynth_image_upscaler.gui.main",
     "vapoursynth_image_upscaler.gui.main_window",
     "vapoursynth_image_upscaler.gui.dialogs",
+    "vapoursynth_image_upscaler.gui.dependencies_window",
     "vapoursynth_image_upscaler.gui.theme",
     "vapoursynth_image_upscaler.gui.worker_thread",
     "vapoursynth_image_upscaler.core",
@@ -58,6 +62,8 @@ hiddenimports = [
     "vapoursynth_image_upscaler.core.utils",
     "vapoursynth_image_upscaler.worker",
     "vapoursynth_image_upscaler.worker.processor",
+    "vapoursynth_image_upscaler.worker.pipeline",
+    "vapoursynth_image_upscaler.worker.batch_processor",
     "vapoursynth_image_upscaler.worker.settings",
 ]
 
