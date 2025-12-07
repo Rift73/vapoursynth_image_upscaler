@@ -1883,7 +1883,8 @@ def process_one_alpha(
 
     # Try to read the actual output path from the main worker
     # (handles cases where overwrite is disabled and filename got numbered suffix)
-    dest_path = read_output_path_file(base_name)
+    # Don't delete after read - clipboard worker may also need to read it
+    dest_path = read_output_path_file(base_name, delete_after_read=False)
 
     if dest_path is not None:
         print(f"[alpha-worker] Using path from main worker: {dest_path}")

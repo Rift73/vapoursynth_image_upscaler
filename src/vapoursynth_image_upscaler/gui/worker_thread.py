@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS, WORKER_TMP_ROOT, MAX_BATCH_SIZE
-from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps
+from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps, read_output_path_file
 
 # Extensions eligible for batch processing (static images only)
 BATCH_ELIGIBLE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -835,14 +835,18 @@ class ClipboardWorkerThread(QThread):
         if _image_has_alpha(self.input_file):
             self._run_worker(script_path, "--alpha-worker", output_file.parent, env)
 
-        # Check for output file
-        # The worker names output based on input stem, so look for it
-        expected_output = clipboard_tmp_dir / f"{self.input_file.stem}.png"
-        if not expected_output.exists():
-            # Try original extension
-            expected_output = clipboard_tmp_dir / f"{self.input_file.stem}{self.input_file.suffix}"
+        # Find the output file using the path file written by the worker
+        # This handles cases with model suffix appended, etc.
+        expected_output = read_output_path_file(self.input_file.stem)
 
-        if expected_output.exists():
+        if expected_output is None:
+            # Fallback: look for common output names
+            expected_output = clipboard_tmp_dir / f"{self.input_file.stem}.png"
+            if not expected_output.exists():
+                # Try original extension
+                expected_output = clipboard_tmp_dir / f"{self.input_file.stem}{self.input_file.suffix}"
+
+        if expected_output and expected_output.exists():
             self.status_signal.emit("Image copied to clipboard!")
             self.result_signal.emit(str(expected_output))
         else:

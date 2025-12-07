@@ -139,12 +139,14 @@ def write_output_path_file(base_name: str, output_path: Path) -> None:
         print(f"Warning: Could not write output path file: {e}")
 
 
-def read_output_path_file(base_name: str) -> Path | None:
+def read_output_path_file(base_name: str, delete_after_read: bool = True) -> Path | None:
     """
     Read the actual output path written by the main worker.
 
     Args:
         base_name: The stem of the input file (without extension).
+        delete_after_read: If True, delete the path file after reading.
+            Set to False if multiple readers need to access it.
 
     Returns:
         The actual output path, or None if the file doesn't exist.
@@ -157,11 +159,12 @@ def read_output_path_file(base_name: str) -> Path | None:
         with open(path_file, "r", encoding="utf-8") as f:
             path_str = f.read().strip()
 
-        # Clean up the path file after reading
-        try:
-            path_file.unlink()
-        except OSError:
-            pass
+        # Clean up the path file after reading (if requested)
+        if delete_after_read:
+            try:
+                path_file.unlink()
+            except OSError:
+                pass
 
         return Path(path_str) if path_str else None
     except Exception:
