@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QDialog,
 )
 from PySide6.QtGui import QPixmap, QGuiApplication, QDragEnterEvent, QDropEvent, QImage, QIcon, QShortcut, QKeySequence
-from PySide6.QtCore import Qt, QSize, QEvent, QTimer, Slot
+from PySide6.QtCore import Qt, QSize, QEvent, QTimer, Slot, QMimeData, QUrl
 
 from ..core.constants import (
     GUI_INPUT_TMP_ROOT,
@@ -1585,7 +1585,19 @@ class MainWindow(QMainWindow):
             image = QImage(image_path)
             if not image.isNull():
                 clipboard = QGuiApplication.clipboard()
-                clipboard.setImage(image)
+
+                # Use QMimeData to set both the image and file URL
+                # This provides better alpha channel support across applications
+                mime_data = QMimeData()
+
+                # Set the image data (for apps that accept image data)
+                mime_data.setImageData(image)
+
+                # Set the file URL (for apps that prefer file references - preserves alpha)
+                file_url = QUrl.fromLocalFile(image_path)
+                mime_data.setUrls([file_url])
+
+                clipboard.setMimeData(mime_data)
                 self._progress_label.setText("Image copied to clipboard!")
             else:
                 self._progress_label.setText("Failed to load upscaled image.")
