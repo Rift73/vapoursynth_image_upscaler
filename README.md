@@ -42,7 +42,7 @@ pip install -e .
 Use the **Dependencies** button in the GUI to automatically install:
 
 **Python packages:**
-- PySide6, vsjetpack, Pillow, numpy, vapoursynth
+- PySide6, vsjetpack, Pillow, numpy
 
 **VapourSynth plugins** (installed to `%APPDATA%/Vapoursynth/plugins64`):
 - akarin, fmtconv, resize2, vapoursynth-zip, zsmooth
@@ -52,6 +52,8 @@ Use the **Dependencies** button in the GUI to automatically install:
 - ffmpeg, gifski, avifenc
 
 The installer automatically adds tool directories to your user PATH.
+
+**Note:** VapourSynth itself must be installed manually. Download from [VapourSynth Releases](https://github.com/vapoursynth/vapoursynth/releases).
 
 ### Manual Installation
 

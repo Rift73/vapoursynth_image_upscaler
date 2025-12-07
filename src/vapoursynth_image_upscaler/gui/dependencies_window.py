@@ -2,9 +2,11 @@
 Dependencies installation window for VapourSynth Image Upscaler.
 
 Handles installation of:
-- Python packages via pip (PySide6, vsjetpack, Pillow, numpy, vapoursynth)
+- Python packages via pip (PySide6, vsjetpack, Pillow, numpy)
 - VapourSynth plugins (extracted to %APPDATA%/Vapoursynth/plugins64)
 - External tools (ffmpeg, gifski, avifenc) with PATH setup
+
+Note: VapourSynth itself must be installed manually by the user.
 """
 
 from __future__ import annotations
@@ -42,7 +44,8 @@ if TYPE_CHECKING:
 # === Configuration ===
 
 # Python packages to install via pip
-PIP_PACKAGES = ["PySide6", "vsjetpack", "Pillow", "numpy", "vapoursynth"]
+# Note: VapourSynth is NOT included - it must be installed manually by the user
+PIP_PACKAGES = ["PySide6", "vsjetpack", "Pillow", "numpy"]
 
 # VapourSynth plugins to download
 # Format: (name, url, extract_type, special_handling)
