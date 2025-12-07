@@ -347,14 +347,23 @@ class UpscaleWorkerThread(QThread):
         # Build environment
         env = self._build_worker_env()
 
-        # Run batch worker
-        python_exe = get_pythonw_executable()
-        cmd = [
-            python_exe,
-            str(script_path),
-            "--batch-worker",
-            str(manifest_path),
-        ]
+        # Run batch worker - handle frozen (PyInstaller) vs normal mode
+        if script_path is None:
+            # Frozen mode: use the executable directly
+            cmd = [
+                sys.executable,
+                "--batch-worker",
+                str(manifest_path),
+            ]
+        else:
+            # Normal mode: use pythonw.exe with script
+            python_exe = get_pythonw_executable()
+            cmd = [
+                python_exe,
+                str(script_path),
+                "--batch-worker",
+                str(manifest_path),
+            ]
 
         try:
             process = subprocess.Popen(
@@ -521,8 +530,17 @@ class UpscaleWorkerThread(QThread):
 
         return total_time, num_processed, current_avg
 
-    def _get_script_path(self) -> Path:
-        """Get the path to the main entry point script."""
+    def _get_script_path(self) -> Path | None:
+        """Get the path to the main entry point script.
+
+        Returns None when running as a PyInstaller frozen executable,
+        since we'll use sys.executable directly instead.
+        """
+        # Check if running as PyInstaller frozen executable
+        if getattr(sys, 'frozen', False):
+            # When frozen, we use sys.executable directly in the worker command
+            return None
+
         # When running as a package, we need to find the entry point
         # First try the installed entry point, then fall back to __main__.py
         main_module = sys.modules.get("__main__")
@@ -669,7 +687,7 @@ class UpscaleWorkerThread(QThread):
 
     def _run_worker(
         self,
-        script_path: Path,
+        script_path: Path | None,
         mode: str,
         input_file: Path,
         output_dir: Path,
@@ -677,17 +695,27 @@ class UpscaleWorkerThread(QThread):
         env: dict[str, str],
     ) -> None:
         """Run a worker subprocess without creating a console window."""
-        # Use pythonw.exe on Windows to avoid console windows
-        python_exe = get_pythonw_executable()
-
-        cmd = [
-            python_exe,
-            str(script_path),
-            mode,
-            str(input_file),
-            str(output_dir),
-            str(secondary_dir),
-        ]
+        # Build command based on whether we're frozen (PyInstaller) or not
+        if script_path is None:
+            # Frozen mode: use the executable directly
+            cmd = [
+                sys.executable,
+                mode,
+                str(input_file),
+                str(output_dir),
+                str(secondary_dir),
+            ]
+        else:
+            # Normal mode: use pythonw.exe with script
+            python_exe = get_pythonw_executable()
+            cmd = [
+                python_exe,
+                str(script_path),
+                mode,
+                str(input_file),
+                str(output_dir),
+                str(secondary_dir),
+            ]
 
         # Log file for worker output (useful for debugging)
         log_file = TEMP_BASE / "worker_debug.log"
@@ -821,8 +849,15 @@ class ClipboardWorkerThread(QThread):
             self.status_signal.emit("Failed to upscale image.")
             self.result_signal.emit("")
 
-    def _get_script_path(self) -> Path:
-        """Get the path to the main entry point script."""
+    def _get_script_path(self) -> Path | None:
+        """Get the path to the main entry point script.
+
+        Returns None when running as a PyInstaller frozen executable.
+        """
+        # Check if running as PyInstaller frozen executable
+        if getattr(sys, 'frozen', False):
+            return None
+
         main_module = sys.modules.get("__main__")
         if main_module and hasattr(main_module, "__file__") and main_module.__file__:
             return Path(main_module.__file__).resolve()
@@ -870,22 +905,33 @@ class ClipboardWorkerThread(QThread):
 
     def _run_worker(
         self,
-        script_path: Path,
+        script_path: Path | None,
         mode: str,
         output_dir: Path,
         env: dict[str, str],
     ) -> None:
         """Run a worker subprocess without creating a console window."""
-        python_exe = get_pythonw_executable()
-
-        cmd = [
-            python_exe,
-            str(script_path),
-            mode,
-            str(self.input_file),
-            str(output_dir),
-            str(output_dir),  # secondary_dir (unused)
-        ]
+        # Build command based on whether we're frozen (PyInstaller) or not
+        if script_path is None:
+            # Frozen mode: use the executable directly
+            cmd = [
+                sys.executable,
+                mode,
+                str(self.input_file),
+                str(output_dir),
+                str(output_dir),  # secondary_dir (unused)
+            ]
+        else:
+            # Normal mode: use pythonw.exe with script
+            python_exe = get_pythonw_executable()
+            cmd = [
+                python_exe,
+                str(script_path),
+                mode,
+                str(self.input_file),
+                str(output_dir),
+                str(output_dir),  # secondary_dir (unused)
+            ]
 
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
