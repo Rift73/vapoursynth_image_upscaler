@@ -29,7 +29,7 @@ from ..core.constants import (
     MAX_VIDEO_DURATION_FOR_GIF,
     CREATE_NO_WINDOW,
 )
-from ..core.utils import write_time_file, write_output_path_file, read_output_path_file
+from ..core.utils import write_time_file, write_output_path_file, read_output_path_file, optimize_png
 from .settings import WorkerSettings
 from .pipeline import (
     build_clip,
@@ -1971,6 +1971,16 @@ def process_one_alpha(
             prefix=prefix,
         )
         print(f"[alpha-worker] Write complete, file exists: {dest_path.exists()}")
+
+        # Apply PNG optimization if enabled (after alpha is merged)
+        if dest_path.suffix.lower() == ".png":
+            if settings.png_quantize_enabled or settings.png_optimize_enabled:
+                optimize_png(
+                    dest_path,
+                    quantize_enabled=settings.png_quantize_enabled,
+                    quantize_colors=settings.png_quantize_colors,
+                    optimize_enabled=settings.png_optimize_enabled,
+                )
 
     except Exception as e:
         import traceback

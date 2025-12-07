@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from ..core.constants import CREATE_NO_WINDOW, TEMP_BASE, SUPPORTED_VIDEO_EXTENSIONS, WORKER_TMP_ROOT, MAX_BATCH_SIZE
-from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps, read_output_path_file
+from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_duration, get_video_fps, read_output_path_file, optimize_png
 
 # Extensions eligible for batch processing (static images only)
 BATCH_ELIGIBLE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -133,6 +133,9 @@ class UpscaleWorkerThread(QThread):
         avif_lossless: bool = False,
         apng_pred: str = "mixed",
         upscale_enabled: bool = True,
+        png_quantize_enabled: bool = False,
+        png_quantize_colors: int = 256,
+        png_optimize_enabled: bool = False,
         parent=None,
     ):
         super().__init__(parent)
@@ -150,6 +153,9 @@ class UpscaleWorkerThread(QThread):
         self.avif_lossless = avif_lossless
         self.apng_pred = apng_pred
         self.upscale_enabled = upscale_enabled
+        self.png_quantize_enabled = png_quantize_enabled
+        self.png_quantize_colors = png_quantize_colors
+        self.png_optimize_enabled = png_optimize_enabled
         self.output_dir = output_dir
         self.secondary_output_dir = secondary_output_dir
         self.single_input_is_file = single_input_is_file
@@ -517,6 +523,16 @@ class UpscaleWorkerThread(QThread):
             print(f"[DEBUG] File: {f.name}, has_alpha: {has_alpha}, in set: {f in self._files_with_alpha}")
             if has_alpha and not self._cancel_flag:
                 self._run_worker(script_path, "--alpha-worker", f, per_output_dir, per_secondary_dir, env)
+            elif (self.png_quantize_enabled or self.png_optimize_enabled) and not self._cancel_flag:
+                # For non-alpha images, apply PNG optimization here (alpha-worker does it for alpha images)
+                output_path = read_output_path_file(f.stem, delete_after_read=True)
+                if output_path and output_path.suffix.lower() == ".png":
+                    optimize_png(
+                        output_path,
+                        quantize_enabled=self.png_quantize_enabled,
+                        quantize_colors=self.png_quantize_colors,
+                        optimize_enabled=self.png_optimize_enabled,
+                    )
 
             # Use wall-clock time for accurate ETA
             file_elapsed = time.perf_counter() - file_start
@@ -683,6 +699,9 @@ class UpscaleWorkerThread(QThread):
         env["AVIF_LOSSLESS"] = "1" if self.avif_lossless else "0"
         env["APNG_PRED"] = self.apng_pred
         env["UPSCALE_ENABLED"] = "1" if self.upscale_enabled else "0"
+        env["PNG_QUANTIZE_ENABLED"] = "1" if self.png_quantize_enabled else "0"
+        env["PNG_QUANTIZE_COLORS"] = str(self.png_quantize_colors)
+        env["PNG_OPTIMIZE_ENABLED"] = "1" if self.png_optimize_enabled else "0"
         return env
 
     def _run_worker(

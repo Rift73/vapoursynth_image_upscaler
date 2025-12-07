@@ -368,3 +368,99 @@ def get_video_fps(file_path: Path) -> float:
         pass
 
     return 0.0
+
+
+def optimize_png(
+    file_path: Path,
+    quantize_enabled: bool = False,
+    quantize_colors: int = 256,
+    optimize_enabled: bool = False,
+) -> bool:
+    """
+    Optimize a PNG file using pngquant (quantization) and/or pingo (lossless optimization).
+
+    Pipeline: file → pngquant (if enabled) → pingo (if enabled)
+
+    Args:
+        file_path: Path to the PNG file to optimize.
+        quantize_enabled: Enable color quantization with pngquant.
+        quantize_colors: Number of colors for quantization (1-256).
+        optimize_enabled: Enable lossless optimization with pingo.
+
+    Returns:
+        True if any optimization was applied, False otherwise.
+    """
+    import subprocess
+    from .constants import CREATE_NO_WINDOW
+
+    if not file_path.exists() or file_path.suffix.lower() != ".png":
+        return False
+
+    if not quantize_enabled and not optimize_enabled:
+        return False
+
+    applied = False
+
+    # Step 1: pngquant (lossy quantization)
+    if quantize_enabled:
+        try:
+            colors = max(1, min(256, quantize_colors))
+            result = subprocess.run(
+                [
+                    "pngquant",
+                    "--force",  # Overwrite existing files
+                    "--ext", ".png",  # Keep the same extension (overwrite in place)
+                    "--quality", "0-100",  # Allow full quality range
+                    str(colors),  # Number of colors
+                    str(file_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            if result.returncode == 0:
+                print(f"[pngquant] Quantized to {colors} colors: {file_path.name}")
+                applied = True
+            else:
+                # pngquant returns 99 if the file already has fewer colors than requested
+                if result.returncode == 99:
+                    print(f"[pngquant] File already optimized: {file_path.name}")
+                else:
+                    print(f"[pngquant] Failed ({result.returncode}): {result.stderr.strip()}")
+        except FileNotFoundError:
+            print("[pngquant] Not found in PATH - skipping quantization")
+        except subprocess.TimeoutExpired:
+            print("[pngquant] Timeout - skipping")
+        except Exception as e:
+            print(f"[pngquant] Error: {e}")
+
+    # Step 2: pingo (lossless optimization)
+    if optimize_enabled:
+        try:
+            result = subprocess.run(
+                [
+                    "pingo",
+                    "-lossless",
+                    "-s4",  # Compression level 4 (good balance)
+                    "-strip",  # Strip metadata
+                    str(file_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,  # Longer timeout for pingo
+                creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            if result.returncode == 0:
+                print(f"[pingo] Optimized: {file_path.name}")
+                applied = True
+            else:
+                print(f"[pingo] Failed ({result.returncode}): {result.stderr.strip()}")
+        except FileNotFoundError:
+            print("[pingo] Not found in PATH - skipping optimization")
+        except subprocess.TimeoutExpired:
+            print("[pingo] Timeout - skipping")
+        except Exception as e:
+            print(f"[pingo] Error: {e}")
+
+    return applied

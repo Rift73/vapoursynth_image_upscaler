@@ -542,6 +542,150 @@ class CustomResolutionDialog(QDialog):
 
 
 @dataclass
+class PngOptimizationSettings:
+    """Settings returned from the PngOptionsDialog."""
+
+    quantize_enabled: bool  # Enable pngquant quantization
+    quantize_colors: int  # Number of colors (1-256)
+    optimize_enabled: bool  # Enable pingo optimization
+
+
+class PngOptionsDialog(QDialog):
+    """
+    Dialog for configuring PNG optimization settings.
+
+    Features:
+    - Quantize: Reduce colors using pngquant (1-256 colors)
+    - Optimize: Lossless compression using pingo
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        quantize_enabled: bool = False,
+        quantize_colors: int = 256,
+        optimize_enabled: bool = False,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("PNG Options")
+        self.resize(400, 250)
+
+        # Quantize settings
+        self._quantize_check = QCheckBox("Enable Quantize (pngquant)")
+        self._quantize_check.setChecked(quantize_enabled)
+        self._quantize_check.setToolTip(
+            "Reduce PNG colors using pngquant.\n"
+            "This is lossy but can significantly reduce file size."
+        )
+
+        self._colors_slider = QSlider(Qt.Orientation.Horizontal)
+        self._colors_slider.setRange(1, 256)
+        self._colors_slider.setValue(quantize_colors)
+        self._colors_slider.setToolTip("Number of colors: 1 (smallest) to 256 (best quality)")
+
+        self._colors_spin = QSpinBox()
+        self._colors_spin.setRange(1, 256)
+        self._colors_spin.setValue(quantize_colors)
+
+        # Optimize settings
+        self._optimize_check = QCheckBox("Enable Optimize (pingo)")
+        self._optimize_check.setChecked(optimize_enabled)
+        self._optimize_check.setToolTip(
+            "Lossless PNG optimization using pingo.\n"
+            "Reduces file size without quality loss."
+        )
+
+        # Buttons
+        self._ok_button = QPushButton("OK")
+        self._cancel_button = QPushButton("Cancel")
+
+        self._build_ui()
+        self._connect_signals()
+        self._update_enabled_states()
+
+    def _build_ui(self) -> None:
+        """Build the dialog UI."""
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+
+        # Quantize group
+        quantize_group = QGroupBox("Quantize (pngquant)")
+        q_layout = QGridLayout()
+        quantize_group.setLayout(q_layout)
+
+        q_layout.addWidget(self._quantize_check, 0, 0, 1, 3)
+        q_layout.addWidget(QLabel("Colors:"), 1, 0)
+        q_layout.addWidget(self._colors_slider, 1, 1)
+        q_layout.addWidget(self._colors_spin, 1, 2)
+
+        quantize_hint = QLabel("(Lower = smaller file, fewer colors)")
+        quantize_hint.setStyleSheet("color: gray; font-size: 10px;")
+        q_layout.addWidget(quantize_hint, 2, 1, 1, 2)
+
+        layout.addWidget(quantize_group)
+
+        # Optimize group
+        optimize_group = QGroupBox("Optimize (pingo)")
+        o_layout = QVBoxLayout()
+        optimize_group.setLayout(o_layout)
+
+        o_layout.addWidget(self._optimize_check)
+
+        optimize_hint = QLabel("Lossless compression - no quality loss")
+        optimize_hint.setStyleSheet("color: gray; font-size: 10px;")
+        o_layout.addWidget(optimize_hint)
+
+        layout.addWidget(optimize_group)
+
+        # Pipeline info
+        info_label = QLabel(
+            "Pipeline: Output → pngquant (if enabled) → pingo (if enabled)\n\n"
+            "Note: These tools must be in PATH or installed via Dependencies."
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        layout.addStretch()
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(self._ok_button)
+        btn_layout.addWidget(self._cancel_button)
+        layout.addLayout(btn_layout)
+
+    def _connect_signals(self) -> None:
+        """Connect widget signals."""
+        self._quantize_check.toggled.connect(self._update_enabled_states)
+
+        # Slider/spin sync
+        self._colors_slider.valueChanged.connect(self._colors_spin.setValue)
+        self._colors_spin.valueChanged.connect(self._colors_slider.setValue)
+
+        self._ok_button.clicked.connect(self.accept)
+        self._cancel_button.clicked.connect(self.reject)
+
+    def _update_enabled_states(self) -> None:
+        """Update enabled states based on checkbox."""
+        quantize_on = self._quantize_check.isChecked()
+        self._colors_slider.setEnabled(quantize_on)
+        self._colors_spin.setEnabled(quantize_on)
+
+    def get_settings(self) -> PngOptimizationSettings:
+        """
+        Get the configured settings.
+
+        Returns:
+            PngOptimizationSettings with dialog values.
+        """
+        return PngOptimizationSettings(
+            quantize_enabled=self._quantize_check.isChecked(),
+            quantize_colors=self._colors_spin.value(),
+            optimize_enabled=self._optimize_check.isChecked(),
+        )
+
+
+@dataclass
 class AnimatedOutputSettings:
     """Settings returned from the AnimatedOutputDialog."""
 

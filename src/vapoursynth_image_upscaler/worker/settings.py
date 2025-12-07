@@ -112,6 +112,11 @@ class WorkerSettings:
     # Upscale toggle - when False, skips SR upscaling and only applies resolution/alpha
     upscale_enabled: bool
 
+    # PNG optimization settings
+    png_quantize_enabled: bool  # Enable pngquant quantization
+    png_quantize_colors: int  # Number of colors (1-256)
+    png_optimize_enabled: bool  # Enable pingo optimization
+
     @classmethod
     def from_environment(cls) -> WorkerSettings:
         """Create WorkerSettings by reading environment variables."""
@@ -170,6 +175,9 @@ class WorkerSettings:
             avif_lossless=get_env_bool("AVIF_LOSSLESS", False),
             apng_pred=get_env_str("APNG_PRED", "mixed"),
             upscale_enabled=get_env_bool("UPSCALE_ENABLED", True),
+            png_quantize_enabled=get_env_bool("PNG_QUANTIZE_ENABLED", False),
+            png_quantize_colors=get_env_int("PNG_QUANTIZE_COLORS", 256),
+            png_optimize_enabled=get_env_bool("PNG_OPTIMIZE_ENABLED", False),
         )
 
     def get_model_suffix(self) -> str:

@@ -49,7 +49,7 @@ from ..core.constants import (
 )
 from ..core.config import Config
 from ..core.utils import cleanup_gui_input_tmp, format_time_hms
-from .dialogs import CustomResolutionDialog, AnimatedOutputDialog
+from .dialogs import CustomResolutionDialog, AnimatedOutputDialog, PngOptionsDialog
 from .dependencies_window import DependenciesWindow
 from .worker_thread import UpscaleWorkerThread, ClipboardWorkerThread
 from .theme import ThemeManager, AVAILABLE_THEMES
@@ -200,6 +200,11 @@ class MainWindow(QMainWindow):
         # APNG settings
         self._apng_pred = "mixed"
 
+        # PNG optimization settings
+        self._png_quantize_enabled = False
+        self._png_quantize_colors = 256
+        self._png_optimize_enabled = False
+
         # Model scale (auto-detected from ONNX filename or user-selected)
         self._model_scale: int = 4
 
@@ -300,6 +305,8 @@ class MainWindow(QMainWindow):
         self._custom_res_button = QPushButton("Resolution")
         self._animated_output_button = QPushButton("Animated Output")
         self._animated_output_button.setToolTip("Configure output format for animated content (GIF, WebP, AVIF)")
+        self._png_options_button = QPushButton("PNG Options")
+        self._png_options_button.setToolTip("Configure PNG optimization (pngquant, pingo)")
         self._dependencies_button = QPushButton("Dependencies")
         self._dependencies_button.setToolTip("Install required dependencies (VapourSynth plugins, ffmpeg, etc.)")
 
@@ -410,6 +417,7 @@ class MainWindow(QMainWindow):
         opts_layout.addWidget(self._append_model_suffix_check)
         opts_layout.addWidget(self._custom_res_button)
         opts_layout.addWidget(self._animated_output_button)
+        opts_layout.addWidget(self._png_options_button)
         opts_layout.addWidget(self._dependencies_button)
         opts_layout.addStretch()
         main_layout.addWidget(opts_container, row, 0, 1, 4)
@@ -460,6 +468,7 @@ class MainWindow(QMainWindow):
         self._clipboard_button.clicked.connect(self._on_clipboard_clicked)
         self._custom_res_button.clicked.connect(self._open_custom_res_dialog)
         self._animated_output_button.clicked.connect(self._open_animated_output_dialog)
+        self._png_options_button.clicked.connect(self._open_png_options_dialog)
         self._dependencies_button.clicked.connect(self._open_dependencies_window)
         self._sharpen_check.toggled.connect(self._on_sharpen_toggled)
         self._manga_folder_check.toggled.connect(self._on_manga_folder_toggled)
@@ -543,6 +552,10 @@ class MainWindow(QMainWindow):
         self._avif_lossless = config.avif_lossless
         self._apng_pred = config.apng_pred
 
+        self._png_quantize_enabled = config.png_quantize_enabled
+        self._png_quantize_colors = config.png_quantize_colors
+        self._png_optimize_enabled = config.png_optimize_enabled
+
         # Load theme and apply (without triggering save)
         if config.theme in AVAILABLE_THEMES:
             self._theme_combo.blockSignals(True)
@@ -598,6 +611,9 @@ class MainWindow(QMainWindow):
             avif_speed=self._avif_speed,
             avif_lossless=self._avif_lossless,
             apng_pred=self._apng_pred,
+            png_quantize_enabled=self._png_quantize_enabled,
+            png_quantize_colors=self._png_quantize_colors,
+            png_optimize_enabled=self._png_optimize_enabled,
             theme=self._theme_combo.currentText(),
         )
         config.save()
@@ -1225,6 +1241,26 @@ class MainWindow(QMainWindow):
             import traceback
             QMessageBox.critical(self, "Error", f"Failed to open dialog: {e}\n\n{traceback.format_exc()}")
 
+    # ========== PNG Options Dialog ==========
+
+    def _open_png_options_dialog(self) -> None:
+        """Open the PNG optimization settings dialog."""
+        try:
+            dlg = PngOptionsDialog(
+                self,
+                quantize_enabled=self._png_quantize_enabled,
+                quantize_colors=self._png_quantize_colors,
+                optimize_enabled=self._png_optimize_enabled,
+            )
+            if dlg.exec() == QDialog.Accepted:
+                settings = dlg.get_settings()
+                self._png_quantize_enabled = settings.quantize_enabled
+                self._png_quantize_colors = settings.quantize_colors
+                self._png_optimize_enabled = settings.optimize_enabled
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Error", f"Failed to open dialog: {e}\n\n{traceback.format_exc()}")
+
     # ========== Dependencies Window ==========
 
     def _open_dependencies_window(self) -> None:
@@ -1481,6 +1517,9 @@ class MainWindow(QMainWindow):
             avif_lossless=self._avif_lossless,
             apng_pred=self._apng_pred,
             upscale_enabled=self._upscale_check.isChecked(),
+            png_quantize_enabled=self._png_quantize_enabled,
+            png_quantize_colors=self._png_quantize_colors,
+            png_optimize_enabled=self._png_optimize_enabled,
         )
         self._worker_thread.progress_signal.connect(self._on_progress_update)
         self._worker_thread.thumbnail_signal.connect(self._on_thumbnail_update)

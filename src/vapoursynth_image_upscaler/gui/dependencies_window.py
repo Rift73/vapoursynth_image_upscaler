@@ -4,7 +4,7 @@ Dependencies installation window for VapourSynth Image Upscaler.
 Handles installation of:
 - Python packages via pip (PySide6, vsjetpack, Pillow, numpy)
 - VapourSynth plugins (extracted to %APPDATA%/Vapoursynth/plugins64)
-- External tools (ffmpeg, gifski, avifenc) with PATH setup
+- External tools (ffmpeg, gifski, avifenc, pngquant, pingo) with PATH setup
 
 Note: VapourSynth itself must be installed manually by the user.
 """
@@ -139,6 +139,18 @@ EXTERNAL_TOOLS = [
     (
         "avifenc",
         "https://github.com/AOMediaCodec/libavif/releases/download/v1.3.0/windows-artifacts.zip",
+        "zip",
+        "",  # Add TOOLS_DIR directly to PATH
+    ),
+    (
+        "pngquant",
+        "https://github.com/jibsen/pngquant-winbuild/releases/download/v2.17.0/pngquant-2.17.0-win-x64.zip",
+        "zip",
+        "",  # Add TOOLS_DIR directly to PATH
+    ),
+    (
+        "pingo",
+        "https://css-ig.net/bin/pingo-win64.zip",
         "zip",
         "",  # Add TOOLS_DIR directly to PATH
     ),
@@ -613,7 +625,7 @@ class DependenciesWindow(QDialog):
     Provides UI for installing all required dependencies:
     - Python packages via pip
     - VapourSynth plugins
-    - External tools (ffmpeg, gifski, avifenc)
+    - External tools (ffmpeg, gifski, avifenc, pngquant, pingo)
     """
 
     def __init__(self, parent: QWidgetType | None = None):
@@ -641,11 +653,13 @@ class DependenciesWindow(QDialog):
 
         info_text = QLabel(
             "This will install all dependencies required for VapourSynth Image Upscaler:\n\n"
-            "<b>Python packages:</b> PySide6, vsjetpack, Pillow, numpy, vapoursynth\n\n"
+            "<b>Python packages:</b> PySide6, vsjetpack, Pillow, numpy\n\n"
             "<b>VapourSynth plugins:</b> akarin, fmtconv, resize2, vapoursynth-zip, zsmooth, "
             "bestsource, imwri, deblock, dctfilter, vsmlrt\n\n"
-            "<b>External tools:</b> ffmpeg, gifski, avifenc (for animated output)\n\n"
-            "<b>Note:</b> 7-Zip is required for extracting .7z files."
+            "<b>External tools:</b> ffmpeg, gifski, avifenc (animated output), "
+            "pngquant, pingo (PNG optimization)\n\n"
+            "<b>Note:</b> 7-Zip is required for extracting .7z files.\n"
+            "VapourSynth must be installed manually."
         )
         info_text.setTextFormat(Qt.RichText)
         info_text.setWordWrap(True)

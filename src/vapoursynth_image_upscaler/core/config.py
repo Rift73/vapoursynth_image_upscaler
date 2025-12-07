@@ -96,6 +96,11 @@ class Config:
     # APNG settings (FFmpeg apng encoder)
     apng_pred: str = "mixed"  # "none", "sub", "up", "avg", "paeth", "mixed"
 
+    # PNG optimization settings
+    png_quantize_enabled: bool = False  # Enable pngquant quantization
+    png_quantize_colors: int = 256  # Number of colors (1-256)
+    png_optimize_enabled: bool = False  # Enable pingo optimization
+
     # Last used input path (for convenience on restart)
     input_path: str = ""
 
@@ -173,6 +178,10 @@ class Config:
                 config.avif_lossless = _read_reg_bool(key, "avif_lossless", config.avif_lossless)
                 config.apng_pred = _read_reg_str(key, "apng_pred", config.apng_pred)
 
+                config.png_quantize_enabled = _read_reg_bool(key, "png_quantize_enabled", config.png_quantize_enabled)
+                config.png_quantize_colors = _read_reg_int(key, "png_quantize_colors", config.png_quantize_colors)
+                config.png_optimize_enabled = _read_reg_bool(key, "png_optimize_enabled", config.png_optimize_enabled)
+
                 config.input_path = _read_reg_str(key, "input_path", config.input_path)
                 config.last_onnx_browse_dir = _read_reg_str(key, "last_onnx_browse_dir", config.last_onnx_browse_dir)
 
@@ -243,6 +252,10 @@ class Config:
                 _write_reg_int(key, "avif_speed", self.avif_speed)
                 _write_reg_bool(key, "avif_lossless", self.avif_lossless)
                 _write_reg_str(key, "apng_pred", self.apng_pred)
+
+                _write_reg_bool(key, "png_quantize_enabled", self.png_quantize_enabled)
+                _write_reg_int(key, "png_quantize_colors", self.png_quantize_colors)
+                _write_reg_bool(key, "png_optimize_enabled", self.png_optimize_enabled)
 
                 _write_reg_str(key, "input_path", self.input_path)
                 _write_reg_str(key, "last_onnx_browse_dir", self.last_onnx_browse_dir)

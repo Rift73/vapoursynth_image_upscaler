@@ -17,6 +17,7 @@ A Windows desktop tool for batch image super-resolution using VapourSynth and Te
 - Custom resolution and secondary output options
 - Pre-scale downscaling before SR processing
 - Post-upscale sharpening with CAS
+- PNG optimization: quantization (pngquant) and lossless compression (pingo)
 - Manga folder mode for preserving directory structure
 - Real-time progress with ETA tracking
 - Batch processing mode for faster inference on multiple images
@@ -49,7 +50,8 @@ Use the **Dependencies** button in the GUI to automatically install:
 - bestsource, imwri, deblock, dctfilter, vsmlrt
 
 **External tools** (installed to `%APPDATA%/vapoursynth-image-upscaler-GUI`):
-- ffmpeg, gifski, avifenc
+- ffmpeg, gifski, avifenc (animated output)
+- pngquant, pingo (PNG optimization)
 
 The installer automatically adds tool directories to your user PATH.
 

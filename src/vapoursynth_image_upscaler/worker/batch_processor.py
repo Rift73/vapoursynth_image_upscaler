@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from PIL import Image
 
 from ..core.constants import WORKER_TMP_ROOT, MAX_BATCH_SIZE
+from ..core.utils import optimize_png
 
 if TYPE_CHECKING:
     from .settings import WorkerSettings
@@ -295,6 +296,14 @@ def process_batch(
             # Move main file to final destination immediately
             if out_path.exists():
                 shutil.move(str(out_path), str(dest_path))
+                # Apply PNG optimization if enabled (batch files don't have alpha)
+                if settings.png_quantize_enabled or settings.png_optimize_enabled:
+                    optimize_png(
+                        dest_path,
+                        quantize_enabled=settings.png_quantize_enabled,
+                        quantize_colors=settings.png_quantize_colors,
+                        optimize_enabled=settings.png_optimize_enabled,
+                    )
 
             # Write and move secondary output if enabled
             if clip_secondary is not None:
