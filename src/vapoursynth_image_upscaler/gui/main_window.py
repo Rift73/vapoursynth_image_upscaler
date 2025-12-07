@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
 )
-from PySide6.QtGui import QPixmap, QGuiApplication, QDragEnterEvent, QDropEvent, QImage, QIcon
+from PySide6.QtGui import QPixmap, QGuiApplication, QDragEnterEvent, QDropEvent, QImage, QIcon, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, QSize, QEvent, QTimer, Slot
 
 from ..core.constants import (
@@ -50,6 +50,7 @@ from ..core.constants import (
 from ..core.config import Config
 from ..core.utils import cleanup_gui_input_tmp, format_time_hms
 from .dialogs import CustomResolutionDialog, AnimatedOutputDialog
+from .dependencies_window import DependenciesWindow
 from .worker_thread import UpscaleWorkerThread, ClipboardWorkerThread
 from .theme import ThemeManager, AVAILABLE_THEMES
 
@@ -238,6 +239,7 @@ class MainWindow(QMainWindow):
         for combo in (self._tile_w_combo, self._tile_h_combo):
             combo.setEditable(True)
             combo.addItems(["512", "768", "1024", "1088", "1536", "1920"])
+            combo.setFixedWidth(100)
 
         self._tile_w_combo.setCurrentText("1088")
         self._tile_h_combo.setCurrentText("1920")
@@ -255,9 +257,6 @@ class MainWindow(QMainWindow):
         self._append_model_suffix_check = QCheckBox("Append model suffix")
         self._overwrite_check = QCheckBox("Overwrite")
         self._overwrite_check.setChecked(True)
-        self._alpha_check = QCheckBox("Transparency")
-        self._batch_mode_check = QCheckBox("Batch mode")
-        self._batch_mode_check.setToolTip("Process images as sequence (faster, no alpha)")
 
         # Precision checkboxes
         self._fp16_check = QCheckBox("fp16")
@@ -298,11 +297,11 @@ class MainWindow(QMainWindow):
         self._cancel_button.setEnabled(False)
         self._clipboard_button = QPushButton("To Clipboard")
         self._clipboard_button.setToolTip("Upscale and copy result to clipboard (single image only)")
-        self._open_log_button = QPushButton("Open Log")
-        self._open_log_button.setToolTip("Open the worker debug log file")
         self._custom_res_button = QPushButton("Resolution")
         self._animated_output_button = QPushButton("Animated Output")
         self._animated_output_button.setToolTip("Configure output format for animated content (GIF, WebP, AVIF)")
+        self._dependencies_button = QPushButton("Dependencies")
+        self._dependencies_button.setToolTip("Install required dependencies (VapourSynth plugins, ffmpeg, etc.)")
 
         # Theme dropdown
         self._theme_combo = QComboBox()
@@ -408,11 +407,10 @@ class MainWindow(QMainWindow):
         opts_container = QWidget()
         opts_container.setLayout(opts_layout)
         opts_layout.addWidget(self._overwrite_check)
-        opts_layout.addWidget(self._alpha_check)
-        opts_layout.addWidget(self._batch_mode_check)
         opts_layout.addWidget(self._append_model_suffix_check)
         opts_layout.addWidget(self._custom_res_button)
         opts_layout.addWidget(self._animated_output_button)
+        opts_layout.addWidget(self._dependencies_button)
         opts_layout.addStretch()
         main_layout.addWidget(opts_container, row, 0, 1, 4)
         row += 1
@@ -437,14 +435,13 @@ class MainWindow(QMainWindow):
         thumb_layout.addWidget(self._image_info_label)
         main_layout.addWidget(thumb_box, 0, 4, row, 1)
 
-        # Buttons at bottom (Start=2/5, Cancel=2/5, To Clipboard=1/5, Open Log=1/5, Theme)
+        # Buttons at bottom (Start, Cancel, To Clipboard, Theme)
         btn_layout = QHBoxLayout()
         btn_container = QWidget()
         btn_container.setLayout(btn_layout)
         btn_layout.addWidget(self._start_button, 2)
         btn_layout.addWidget(self._cancel_button, 2)
         btn_layout.addWidget(self._clipboard_button, 1)
-        btn_layout.addWidget(self._open_log_button, 1)
         btn_layout.addWidget(QLabel("Theme:"))
         btn_layout.addWidget(self._theme_combo)
         main_layout.addWidget(btn_container, row, 0, 1, 5)
@@ -461,13 +458,17 @@ class MainWindow(QMainWindow):
         self._start_button.clicked.connect(self._on_start_clicked)
         self._cancel_button.clicked.connect(self._on_cancel_clicked)
         self._clipboard_button.clicked.connect(self._on_clipboard_clicked)
-        self._open_log_button.clicked.connect(self._on_open_log_clicked)
         self._custom_res_button.clicked.connect(self._open_custom_res_dialog)
         self._animated_output_button.clicked.connect(self._open_animated_output_dialog)
+        self._dependencies_button.clicked.connect(self._open_dependencies_window)
         self._sharpen_check.toggled.connect(self._on_sharpen_toggled)
         self._manga_folder_check.toggled.connect(self._on_manga_folder_toggled)
         self._upscale_check.toggled.connect(self._on_upscale_toggled)
         self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
+
+        # Keyboard shortcuts
+        self._open_log_shortcut = QShortcut(QKeySequence("Ctrl+L"), self)
+        self._open_log_shortcut.activated.connect(self._on_open_log_clicked)
 
     # ========== Settings Persistence ==========
 
@@ -493,8 +494,6 @@ class MainWindow(QMainWindow):
         if config.manga_folder:
             self._same_dir_check.setEnabled(False)
         self._overwrite_check.setChecked(config.overwrite)
-        self._alpha_check.setChecked(config.use_alpha)
-        self._batch_mode_check.setChecked(config.batch_mode)
         self._append_model_suffix_check.setChecked(config.append_model_suffix)
 
         self._fp16_check.setChecked(config.use_fp16)
@@ -565,8 +564,6 @@ class MainWindow(QMainWindow):
             manga_folder=self._manga_folder_check.isChecked(),
             append_model_suffix=self._append_model_suffix_check.isChecked(),
             overwrite=self._overwrite_check.isChecked(),
-            use_alpha=self._alpha_check.isChecked(),
-            batch_mode=self._batch_mode_check.isChecked(),
             use_fp16=self._fp16_check.isChecked(),
             use_bf16=self._bf16_check.isChecked(),
             use_tf32=self._tf32_check.isChecked(),
@@ -1228,6 +1225,17 @@ class MainWindow(QMainWindow):
             import traceback
             QMessageBox.critical(self, "Error", f"Failed to open dialog: {e}\n\n{traceback.format_exc()}")
 
+    # ========== Dependencies Window ==========
+
+    def _open_dependencies_window(self) -> None:
+        """Open the dependencies installation window."""
+        try:
+            dlg = DependenciesWindow(self)
+            dlg.exec()
+        except Exception as e:
+            import traceback
+            QMessageBox.critical(self, "Error", f"Failed to open dependencies window: {e}\n\n{traceback.format_exc()}")
+
     # ========== Log File ==========
 
     def _on_open_log_clicked(self) -> None:
@@ -1288,6 +1296,29 @@ class MainWindow(QMainWindow):
         except ValueError:
             pass
         return 4
+
+    def _should_use_batch_mode(self, files: list[Path]) -> bool:
+        """
+        Determine if batch mode should be used based on file types.
+
+        Batch mode is disabled when:
+        - Any input file is an animated format (GIF)
+        - Less than 2 files to process
+
+        Note: Alpha is now auto-detected per-file by the worker thread.
+        Files with alpha will be automatically separated from the batch.
+        """
+        # Need at least 2 files for batch mode to make sense
+        if len(files) < 2:
+            return False
+
+        # Check for animated formats that need individual processing
+        animated_extensions = {".gif"}
+        for f in files:
+            if f.suffix.lower() in animated_extensions:
+                return False
+
+        return True
 
     # ========== Start / Cancel ==========
 
@@ -1429,7 +1460,6 @@ class MainWindow(QMainWindow):
             use_bf16=self._bf16_check.isChecked(),
             use_tf32=self._tf32_check.isChecked(),
             num_streams=self._parse_batch_size(self._batch_size_edit.text()),
-            use_alpha=self._alpha_check.isChecked(),
             append_model_suffix_enabled=self._append_model_suffix_check.isChecked(),
             prescale_enabled=self._prescale_enabled,
             prescale_mode=self._prescale_mode,
@@ -1438,7 +1468,7 @@ class MainWindow(QMainWindow):
             prescale_kernel=self._prescale_kernel,
             sharpen_enabled=self._sharpen_check.isChecked(),
             sharpen_value=self._get_sharpen_value(),
-            use_batch_mode=self._batch_mode_check.isChecked(),
+            use_batch_mode=self._should_use_batch_mode(files),
             animated_output_format=self._animated_output_format,
             gif_quality=self._gif_quality,
             gif_fast=self._gif_fast,
@@ -1521,7 +1551,6 @@ class MainWindow(QMainWindow):
             use_fp16=self._fp16_check.isChecked(),
             use_bf16=self._bf16_check.isChecked(),
             use_tf32=self._tf32_check.isChecked(),
-            use_alpha=self._alpha_check.isChecked(),
             custom_res_enabled=self._custom_res_enabled,
             custom_res_mode=self._custom_res_mode,
             custom_width=self._custom_res_width,

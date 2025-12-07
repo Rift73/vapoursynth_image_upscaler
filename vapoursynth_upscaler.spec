@@ -72,6 +72,28 @@ excludes = [
     "notebook",
     "pytest",
     "sphinx",
+    # Exclude PyQt6 to avoid conflict with PySide6
+    "PyQt6",
+    "PyQt5",
+    # Exclude yt-dlp and related packages (not needed)
+    "yt_dlp",
+    "yt_dlp_ejs",
+    "websockets",
+    "curl_cffi",
+    "brotli",
+    "mutagen",
+    "secretstorage",
+    "Cryptodome",
+    # Exclude torch/torchvision (not needed, reduces size significantly)
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "transformers",
+    "timm",
+    # Exclude other ML packages
+    "onnxruntime",
+    "cv2",
+    "opencv-python",
 ]
 
 a = Analysis(
@@ -92,16 +114,21 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Single executable (onefile) build
 exe = EXE(
     pyz,
     a.scripts,
-    [],  # Empty for non-onefile build
-    exclude_binaries=True,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
     name="VapourSynth Upscaler",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,  # No console window for GUI app
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -109,15 +136,4 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(PROJECT_ROOT / "icon.ico"),
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name="VapourSynth Upscaler",
 )

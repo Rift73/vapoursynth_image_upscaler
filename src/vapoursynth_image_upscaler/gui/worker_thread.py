@@ -20,6 +20,53 @@ from ..core.utils import cleanup_tmp_root, get_pythonw_executable, get_video_dur
 BATCH_ELIGIBLE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 
+def _image_has_alpha(path: Path) -> bool:
+    """
+    Check if a static image file has an alpha channel with actual transparency.
+
+    Args:
+        path: Path to the image file.
+
+    Returns:
+        True if the image has meaningful alpha (not fully opaque), False otherwise.
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+
+        with Image.open(str(path)) as img:
+            # Check for palette images with transparency
+            if img.mode == 'P':
+                # Palette images can have transparency via 'transparency' info
+                if 'transparency' in img.info:
+                    # Convert to RGBA to check actual alpha values
+                    rgba = img.convert('RGBA')
+                    alpha = np.array(rgba)[:, :, 3]
+                    return bool(np.any(alpha < 255))
+                return False
+
+            # Check if image has alpha channel
+            if img.mode not in ('RGBA', 'LA', 'PA'):
+                return False
+
+            # Convert to RGBA to get alpha channel
+            if img.mode == 'LA':
+                img = img.convert('RGBA')
+            elif img.mode == 'PA':
+                img = img.convert('RGBA')
+
+            # Get alpha channel
+            if img.mode == 'RGBA':
+                alpha = np.array(img)[:, :, 3]
+                # Check if any pixel is not fully opaque
+                return bool(np.any(alpha < 255))
+
+            return False
+    except Exception as e:
+        print(f"Warning: Could not check alpha for {path}: {e}")
+        return False
+
+
 class UpscaleWorkerThread(QThread):
     """
     QThread that manages spawning worker processes for each input file.
@@ -65,7 +112,6 @@ class UpscaleWorkerThread(QThread):
         use_bf16: bool,
         use_tf32: bool,
         num_streams: int = 1,
-        use_alpha: bool = False,
         append_model_suffix_enabled: bool = False,
         prescale_enabled: bool = False,
         prescale_mode: str = "width",
@@ -130,7 +176,6 @@ class UpscaleWorkerThread(QThread):
         self.use_bf16 = use_bf16
         self.use_tf32 = use_tf32
         self.num_streams = num_streams
-        self.use_alpha = use_alpha
         self.append_model_suffix_enabled = append_model_suffix_enabled
         self.prescale_enabled = prescale_enabled
         self.prescale_mode = prescale_mode
@@ -148,19 +193,29 @@ class UpscaleWorkerThread(QThread):
     def run(self) -> None:
         """Main thread execution."""
         # Separate batch-eligible files from non-batch files
+        # Files with alpha need individual processing (alpha-worker runs separately)
         batch_files: list[Path] = []
         single_files: list[Path] = []
+        # Track which files have alpha for later processing
+        self._files_with_alpha: set[Path] = set()
 
         for f in self.files:
             ext = f.suffix.lower()
-            # Only static images without alpha requirement are batch-eligible
-            if self.use_batch_mode and ext in BATCH_ELIGIBLE_EXTENSIONS and not self.use_alpha:
+            # Check if file has alpha (for static images)
+            has_alpha = False
+            if ext in BATCH_ELIGIBLE_EXTENSIONS:
+                has_alpha = _image_has_alpha(f)
+                if has_alpha:
+                    self._files_with_alpha.add(f)
+
+            # Only static images without alpha are batch-eligible
+            if self.use_batch_mode and ext in BATCH_ELIGIBLE_EXTENSIONS and not has_alpha:
                 batch_files.append(f)
             else:
                 single_files.append(f)
 
-        print(f"Batch mode: {self.use_batch_mode}, Alpha: {self.use_alpha}")
-        print(f"Total files: {len(self.files)}, Batch eligible: {len(batch_files)}, Single: {len(single_files)}")
+        print(f"Batch mode: {self.use_batch_mode}")
+        print(f"Total files: {len(self.files)}, Batch eligible: {len(batch_files)}, Single: {len(single_files)}, With alpha: {len(self._files_with_alpha)}")
 
         total_files = len(self.files)
         total_processing_time = 0.0
@@ -447,8 +502,11 @@ class UpscaleWorkerThread(QThread):
             # Run main worker
             self._run_worker(script_path, "--worker", f, per_output_dir, per_secondary_dir, env)
 
-            # Run alpha worker if enabled
-            if self.use_alpha and not self._cancel_flag:
+            # Run alpha worker if this file has alpha (auto-detected)
+            # Note: For animated GIFs, alpha is handled inline in the main worker
+            has_alpha = f in self._files_with_alpha
+            print(f"[DEBUG] File: {f.name}, has_alpha: {has_alpha}, in set: {f in self._files_with_alpha}")
+            if has_alpha and not self._cancel_flag:
                 self._run_worker(script_path, "--alpha-worker", f, per_output_dir, per_secondary_dir, env)
 
             # Use wall-clock time for accurate ETA
@@ -580,7 +638,10 @@ class UpscaleWorkerThread(QThread):
         env["SECONDARY_WIDTH"] = str(self.secondary_width)
         env["SECONDARY_HEIGHT"] = str(self.secondary_height)
         env["SECONDARY_KERNEL"] = self.secondary_kernel
-        env["USE_ALPHA"] = "1" if self.use_alpha else "0"
+        # For animated formats (GIF), always enable alpha processing (auto-detected in processor)
+        # The processor will detect if there's actual transparency
+        is_animated = input_ext.lower() == ".gif"
+        env["USE_ALPHA"] = "1" if is_animated else "0"
         env["APPEND_MODEL_SUFFIX"] = "1" if self.append_model_suffix_enabled else "0"
         env["PRESCALE_ENABLED"] = "1" if self.prescale_enabled else "0"
         env["PRESCALE_MODE"] = self.prescale_mode
@@ -681,7 +742,6 @@ class ClipboardWorkerThread(QThread):
         use_fp16: bool,
         use_bf16: bool,
         use_tf32: bool,
-        use_alpha: bool,
         custom_res_enabled: bool = False,
         custom_res_mode: str = "width",
         custom_width: int = 0,
@@ -705,7 +765,6 @@ class ClipboardWorkerThread(QThread):
         self.use_fp16 = use_fp16
         self.use_bf16 = use_bf16
         self.use_tf32 = use_tf32
-        self.use_alpha = use_alpha
         self.custom_res_enabled = custom_res_enabled
         self.custom_res_mode = custom_res_mode
         self.custom_width = custom_width
@@ -744,8 +803,8 @@ class ClipboardWorkerThread(QThread):
         # Run main worker
         self._run_worker(script_path, "--worker", output_file.parent, env)
 
-        # Run alpha worker if enabled
-        if self.use_alpha:
+        # Run alpha worker if the image has alpha (auto-detected)
+        if _image_has_alpha(self.input_file):
             self._run_worker(script_path, "--alpha-worker", output_file.parent, env)
 
         # Check for output file
@@ -792,7 +851,10 @@ class ClipboardWorkerThread(QThread):
         env["SECONDARY_WIDTH"] = "0"
         env["SECONDARY_HEIGHT"] = "0"
         env["SECONDARY_KERNEL"] = "lanczos"
-        env["USE_ALPHA"] = "1" if self.use_alpha else "0"
+        # For clipboard, static images use alpha-worker (handled outside)
+        # For animated GIFs, enable inline alpha detection
+        is_animated = self.input_file.suffix.lower() == ".gif"
+        env["USE_ALPHA"] = "1" if is_animated else "0"
         env["APPEND_MODEL_SUFFIX"] = "0"  # No suffix for clipboard
         env["PRESCALE_ENABLED"] = "1" if self.prescale_enabled else "0"
         env["PRESCALE_MODE"] = self.prescale_mode

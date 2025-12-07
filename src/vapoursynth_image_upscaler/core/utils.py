@@ -119,6 +119,55 @@ def cleanup_gui_input_tmp() -> None:
         pass
 
 
+def write_output_path_file(base_name: str, output_path: Path) -> None:
+    """
+    Write the actual output path to a file for the alpha-worker to read.
+
+    This is needed when overwrite is disabled and the output filename gets
+    a numbered suffix (e.g., _002, _003) to avoid conflicts.
+
+    Args:
+        base_name: The stem of the input file (without extension).
+        output_path: The actual output path used by the main worker.
+    """
+    try:
+        WORKER_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        path_file = WORKER_TMP_ROOT / f"{base_name}.outpath"
+        with open(path_file, "w", encoding="utf-8") as f:
+            f.write(str(output_path))
+    except Exception as e:
+        print(f"Warning: Could not write output path file: {e}")
+
+
+def read_output_path_file(base_name: str) -> Path | None:
+    """
+    Read the actual output path written by the main worker.
+
+    Args:
+        base_name: The stem of the input file (without extension).
+
+    Returns:
+        The actual output path, or None if the file doesn't exist.
+    """
+    try:
+        path_file = WORKER_TMP_ROOT / f"{base_name}.outpath"
+        if not path_file.exists():
+            return None
+
+        with open(path_file, "r", encoding="utf-8") as f:
+            path_str = f.read().strip()
+
+        # Clean up the path file after reading
+        try:
+            path_file.unlink()
+        except OSError:
+            pass
+
+        return Path(path_str) if path_str else None
+    except Exception:
+        return None
+
+
 def format_time_hms(seconds: float) -> str:
     """
     Format a duration in seconds as HH:MM:SS.

@@ -29,7 +29,7 @@ from ..core.constants import (
     MAX_VIDEO_DURATION_FOR_GIF,
     CREATE_NO_WINDOW,
 )
-from ..core.utils import write_time_file
+from ..core.utils import write_time_file, write_output_path_file, read_output_path_file
 from .settings import WorkerSettings
 from .pipeline import (
     build_clip,
@@ -333,6 +333,8 @@ def _write_clip_imwri(
         clip = core.resize.Point(clip, format=vs.RGB24)
         if alpha_clip is not None:
             alpha_clip = core.resize.Point(alpha_clip, format=vs.GRAY8)
+            # Debug: verify alpha clip properties
+            print(f"[fpng.Write] Alpha clip: {alpha_clip.width}x{alpha_clip.height}, format={alpha_clip.format.name}, frames={len(alpha_clip)}")
 
         sink = clip.fpng.Write(
             filename=str(output_path),
@@ -1800,6 +1802,10 @@ def process_one(
             file_ext,
         )
 
+        # Write the actual output path for alpha-worker to find
+        # (needed when overwrite is disabled and filename gets numbered suffix)
+        write_output_path_file(base_name, dest_path)
+
         # Move temp files to final locations
         _move_output(tmp_main, dest_path)
         if settings.use_secondary_output and tmp_secondary is not None and dest_path_secondary is not None:
@@ -1875,10 +1881,18 @@ def process_one_alpha(
         except Exception:
             pass
 
-    # Resolve main destination path (same logic as main worker)
-    dest_stem, dest_dir_main = settings.compute_dest_stem_and_dir(input_path, output_dir)
-    dest_name = f"{dest_stem}{file_ext}"
-    dest_path = dest_dir_main / dest_name
+    # Try to read the actual output path from the main worker
+    # (handles cases where overwrite is disabled and filename got numbered suffix)
+    dest_path = read_output_path_file(base_name)
+
+    if dest_path is not None:
+        print(f"[alpha-worker] Using path from main worker: {dest_path}")
+    else:
+        # Fallback: compute the path the same way as main worker (for overwrite=True case)
+        dest_stem, dest_dir_main = settings.compute_dest_stem_and_dir(input_path, output_dir)
+        dest_name = f"{dest_stem}{file_ext}"
+        dest_path = dest_dir_main / dest_name
+        print(f"[alpha-worker] Using computed path: {dest_path}")
 
     if not dest_path.exists():
         print(f"[alpha-worker] Main output not found, skipping alpha: {dest_path}")
@@ -1886,13 +1900,43 @@ def process_one_alpha(
 
     try:
         # Build alpha clip - with or without SR upscaling
+        print(f"[alpha-worker] Building alpha for: {input_path.name}")
         if settings.upscale_enabled:
             alpha_sr = build_alpha_hq(input_path, settings)
         else:
             alpha_sr = load_alpha_no_upscale(input_path, settings)
 
-        # Read color main output
-        color_sr = core.imwri.Read(str(dest_path))
+        # Read color main output into memory using Pillow to avoid VapourSynth caching issues
+        # Then create a VS clip from it
+        from PIL import Image
+        import numpy as np
+
+        with Image.open(str(dest_path)) as img:
+            # Convert to RGB if needed
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            color_array = np.array(img)
+
+        # Create color clip from numpy array
+        height, width = color_array.shape[:2]
+        blank_color = core.std.BlankClip(
+            width=width,
+            height=height,
+            format=vs.RGB24,
+            length=1,
+            color=[0, 0, 0],
+        )
+
+        def _inject_color(n, f):
+            fout = f.copy()
+            for plane in range(3):
+                np.copyto(
+                    np.asarray(fout[plane]),
+                    color_array[:, :, plane],
+                )
+            return fout
+
+        color_sr = core.std.ModifyFrame(blank_color, blank_color, _inject_color)
 
         # Match alpha to color resolution and format
         alpha_sr = depth(alpha_sr, 16)
@@ -1906,8 +1950,18 @@ def process_one_alpha(
             range=1,
         )
 
-        # Rewrite output in-place with alpha using imwri.Write
+        # Debug: check alpha clip properties
+        print(f"[alpha-worker] Color: {color_sr.width}x{color_sr.height}, Alpha: {alpha_sr.width}x{alpha_sr.height}")
+
+        # Delete the existing file first to ensure clean overwrite
+        try:
+            dest_path.unlink()
+        except Exception:
+            pass
+
+        # Rewrite output with alpha
         prefix = "Merge color + HQ alpha" if settings.upscale_enabled else "Merge color + alpha"
+        print(f"[alpha-worker] Writing to: {dest_path}")
         _write_clip_imwri(
             color_sr,
             dest_path,
@@ -1915,9 +1969,12 @@ def process_one_alpha(
             alpha_clip=alpha_sr,
             prefix=prefix,
         )
+        print(f"[alpha-worker] Write complete, file exists: {dest_path.exists()}")
 
     except Exception as e:
+        import traceback
         print(f"[alpha-worker] Alpha processing failed: {e}")
+        traceback.print_exc()
 
     finally:
         clear_cache()
@@ -1941,7 +1998,7 @@ def _process_secondary(
 ) -> None:
     """Process secondary resized output from the main output."""
     try:
-        clip_sec_src = core.imwri.Read(str(main_output))
+        clip_sec_src = core.imwri.Read(str(main_output), mismatch=1)
         clip_sec = depth(clip_sec_src, 32)
 
         new_w, new_h = compute_secondary_dimensions(

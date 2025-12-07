@@ -9,23 +9,25 @@ A Windows desktop tool for batch image super-resolution using VapourSynth and Te
 ## Features
 
 - Drag-and-drop GUI for batch image upscaling
-- Supports PNG, JPEG, BMP, TIFF, WebP, GIF
+- Supports PNG, JPEG, BMP, TIFF, WebP, GIF (including animated GIFs)
+- Animated output formats: GIF, WebP, AVIF, APNG
 - TensorRT-accelerated inference via vsmlrt
 - Flexible model scales: 1x, 2x, 4x, 8x
-- Alpha channel processing for transparent images
+- Alpha channel processing for transparent images (including palette-based PNGs)
 - Custom resolution and secondary output options
 - Pre-scale downscaling before SR processing
 - Post-upscale sharpening with CAS
 - Manga folder mode for preserving directory structure
 - Real-time progress with ETA tracking
 - Batch processing mode for faster inference on multiple images
+- Built-in dependencies installer for VapourSynth plugins and external tools
 
 ## Requirements
 
 - Windows 10/11 64-bit
 - NVIDIA GPU with TensorRT support
 - Python 3.10+
-- VapourSynth R62+ with vsmlrt, vstools, vskernels, vssource, fpng
+- 7-Zip (for extracting .7z plugin archives)
 
 ## Installation
 
@@ -34,15 +36,37 @@ git clone https://github.com/yourusername/vapoursynth_image_upscaler.git
 cd vapoursynth_image_upscaler
 pip install -e .
 ```
-```pip install -r requirements.txt```
 
-You need to manually install:
+### Automatic Dependency Installation
 
-- Vapoursynth
-- vsmlrt (TRT)
+Use the **Dependencies** button in the GUI to automatically install:
+
+**Python packages:**
+- PySide6, vsjetpack, Pillow, numpy, vapoursynth
+
+**VapourSynth plugins** (installed to `%APPDATA%/Vapoursynth/plugins64`):
+- akarin, fmtconv, resize2, vapoursynth-zip, zsmooth
+- bestsource, imwri, deblock, dctfilter, vsmlrt
+
+**External tools** (installed to `%APPDATA%/vapoursynth-image-upscaler-GUI`):
+- ffmpeg, gifski, avifenc
+
+The installer automatically adds tool directories to your user PATH.
+
+### Manual Installation
+
+Alternatively, install manually:
+
+```bash
+pip install -r requirements.txt
+```
+
+And manually install:
+- VapourSynth R62+
+- vsmlrt (TRT) with TensorRT backend
 - vsjetpack plugins
 
-Find the upscaling model on openmodeldb
+Find upscaling models on [OpenModelDB](https://openmodeldb.info/)
 
 ## Usage
 
@@ -79,11 +103,26 @@ Each supports width-based, height-based, or 2x scaling with Lanczos or Hermite k
 - **Tile size**: Configure width and height for vsmlrt inference
 - **Model scale**: Match your ONNX model's upscaling factor
 - **Precision**: Toggle fp16, bf16, tf32 for vsmlrt Backend.TRT
-- **Transparency**: Enable alpha channel processing
+- **Transparency**: Enable alpha channel processing (supports palette-based PNGs with indexed transparency)
 - **Sharpen**: Apply contrast adaptive sharpening to output
 - **Overwrite**: Replace existing files or auto-increment names
 - **Append model suffix**: Add model name to output filenames
 - **Batch mode**: Process multiple same-resolution images together for faster inference
+
+### Animated Output Options
+
+Access via the **Animated Output** button to configure output format for animated content:
+
+- **GIF**: Classic animated GIF using gifski for high-quality dithering
+- **WebP**: Animated WebP with configurable quality and compression
+- **AVIF**: Modern AV1-based format with excellent compression (requires avifenc)
+- **APNG**: Animated PNG with lossless quality
+
+Each format has specific quality settings:
+- GIF: Quality (1-100), motion quality, lossy mode
+- WebP: Quality (0-100), compression level (0-6), lossless mode
+- AVIF: Quality (0-63), speed (0-10), separate alpha quality, lossless mode
+- APNG: Predictor selection for optimization
 
 ### Batch Processing Mode
 

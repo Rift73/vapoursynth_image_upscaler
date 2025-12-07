@@ -164,7 +164,7 @@ def process_batch(
         # Load as image sequence
         input_files = [str(input_seq_dir / f"seq_{i:06d}{fmt}") for i in range(num_files)]
         print(f"Loading sequence: {len(input_files)} files")
-        src = core.imwri.Read(input_files)
+        src = core.imwri.Read(input_files, mismatch=1)
 
         # Convert to RGBS
         clip = core.resize.Bicubic(

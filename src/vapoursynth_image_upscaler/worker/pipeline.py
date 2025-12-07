@@ -25,6 +25,81 @@ from .settings import WorkerSettings
 _process_start_time: float | None = None
 
 
+def _is_palette_png_with_transparency(input_path: Path) -> bool:
+    """Check if a PNG file is palette-mode with transparency."""
+    from PIL import Image
+    try:
+        with Image.open(str(input_path)) as img:
+            return img.mode == 'P' and 'transparency' in img.info
+    except Exception:
+        return False
+
+
+def _load_alpha_from_palette_png(input_path: Path) -> vs.VideoNode:
+    """
+    Load alpha channel from a palette-mode PNG using Pillow.
+
+    Palette PNGs store transparency via a special transparency index,
+    which imwri.Read doesn't handle correctly. This function extracts
+    the alpha using Pillow, saves to a temp file, and reads with imwri.
+
+    The temp file path is stored in a module-level variable to prevent
+    deletion until the clip is fully processed.
+    """
+    from PIL import Image
+    import numpy as np
+    import tempfile
+    import os
+
+    with Image.open(str(input_path)) as img:
+        # Convert palette to RGBA to get proper alpha
+        rgba = img.convert('RGBA')
+        alpha_array = np.array(rgba)[:, :, 3]
+
+    # Debug: check alpha stats
+    has_transparency = np.any(alpha_array < 255)
+    min_val, max_val = alpha_array.min(), alpha_array.max()
+    print(f"[palette-alpha] {input_path.name}: size={alpha_array.shape}, has_transparency={has_transparency}, min={min_val}, max={max_val}")
+
+    # Create a grayscale image from alpha and save to temp file
+    alpha_img = Image.fromarray(alpha_array, mode='L')
+
+    # Use a deterministic temp path based on input filename to avoid conflicts
+    temp_dir = Path(tempfile.gettempdir()) / "vs_alpha_tmp"
+    temp_dir.mkdir(exist_ok=True)
+    temp_path = temp_dir / f"{input_path.stem}_alpha.png"
+
+    alpha_img.save(str(temp_path))
+    print(f"[palette-alpha] Saved temp alpha to: {temp_path}")
+
+    # Read with imwri (mismatch=1 to avoid caching issues)
+    alpha_clip = core.imwri.Read(str(temp_path), mismatch=1)
+
+    # Store temp path for later cleanup (done by clear_cache or process end)
+    global _palette_alpha_temp_files
+    if '_palette_alpha_temp_files' not in globals():
+        _palette_alpha_temp_files = []
+    _palette_alpha_temp_files.append(temp_path)
+
+    return alpha_clip
+
+
+# Module-level storage for temp files
+_palette_alpha_temp_files: list = []
+
+
+def cleanup_palette_alpha_temps():
+    """Clean up any temporary alpha files."""
+    global _palette_alpha_temp_files
+    for p in _palette_alpha_temp_files:
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+    _palette_alpha_temp_files = []
+
+
 def get_process_start_time() -> float | None:
     """Get the timestamp when processing started for the current file."""
     return _process_start_time
@@ -329,7 +404,7 @@ def build_clip(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
     img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
     if ext in img_exts:
-        src = core.imwri.Read(str(input_path))
+        src = core.imwri.Read(str(input_path), mismatch=1)
     else:
         src = BestSource.source(str(input_path))
 
@@ -401,7 +476,7 @@ def build_clip_with_frame_selection(
     img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
     if ext in img_exts:
-        src = core.imwri.Read(str(input_path))
+        src = core.imwri.Read(str(input_path), mismatch=1)
     else:
         src = BestSource.source(str(input_path))
 
@@ -475,7 +550,7 @@ def load_clip_no_upscale(input_path: Path, settings: WorkerSettings) -> vs.Video
     img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
     if ext in img_exts:
-        src = core.imwri.Read(str(input_path))
+        src = core.imwri.Read(str(input_path), mismatch=1)
     else:
         src = BestSource.source(str(input_path))
 
@@ -512,7 +587,7 @@ def load_clip_no_upscale_with_frame_selection(
     img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 
     if ext in img_exts:
-        src = core.imwri.Read(str(input_path))
+        src = core.imwri.Read(str(input_path), mismatch=1)
     else:
         src = BestSource.source(str(input_path))
 
@@ -547,27 +622,49 @@ def load_alpha_no_upscale(input_path: Path, settings: WorkerSettings) -> vs.Vide
     _process_start_time = time.perf_counter()
 
     ext = input_path.suffix.lower()
-    if ext == ".png":
-        src = core.imwri.Read(str(input_path), alpha=True)
+
+    # Handle palette-mode PNGs with transparency specially
+    if ext == ".png" and _is_palette_png_with_transparency(input_path):
+        alpha = _load_alpha_from_palette_png(input_path)
+        # Already GRAY8, just ensure proper format
+        alpha = core.resize.Bicubic(
+            alpha,
+            format=vs.GRAY8,
+            transfer_in=13,
+            primaries_in=1,
+            range_in=1,
+            range=1,
+        )
+    elif ext == ".png":
+        src = core.imwri.Read(str(input_path), alpha=True, mismatch=1)
+        clip = initialize_clip(src)
+        # Extract alpha from frame properties
+        alpha = core.std.PropToClip(clip)
+        # Convert to GRAY8
+        alpha = core.resize.Bicubic(
+            alpha,
+            format=vs.GRAY8,
+            transfer_in=13,
+            primaries_in=1,
+            range_in=1,
+            range=1,
+        )
     elif ext in {".webp", ".gif"}:
         src = BestSource.source(str(input_path))
+        clip = initialize_clip(src)
+        # Extract alpha from frame properties
+        alpha = core.std.PropToClip(clip)
+        # Convert to GRAY8
+        alpha = core.resize.Bicubic(
+            alpha,
+            format=vs.GRAY8,
+            transfer_in=13,
+            primaries_in=1,
+            range_in=1,
+            range=1,
+        )
     else:
         raise ValueError("Alpha workflow only supports PNG / GIF / WEBP inputs")
-
-    clip = initialize_clip(src)
-
-    # Extract alpha from frame properties
-    alpha = core.std.PropToClip(clip)
-
-    # Convert to GRAY8
-    alpha = core.resize.Bicubic(
-        alpha,
-        format=vs.GRAY8,
-        transfer_in=13,
-        primaries_in=1,
-        range_in=1,
-        range=1,
-    )
 
     return alpha
 
@@ -595,27 +692,50 @@ def build_alpha_hq(input_path: Path, settings: WorkerSettings) -> vs.VideoNode:
     _process_start_time = time.perf_counter()
 
     ext = input_path.suffix.lower()
-    if ext == ".png":
-        src = core.imwri.Read(str(input_path), alpha=True)
+
+    # Handle palette-mode PNGs with transparency specially
+    # imwri.Read doesn't correctly extract alpha from palette images
+    if ext == ".png" and _is_palette_png_with_transparency(input_path):
+        alpha = _load_alpha_from_palette_png(input_path)
+        # Convert grayscale alpha to RGBS for the model
+        alpha = core.resize.Bicubic(
+            alpha,
+            format=vs.RGBS,
+            transfer_in=13,
+            primaries_in=1,
+            range_in=1,
+            range=1,
+        )
+    elif ext == ".png":
+        src = core.imwri.Read(str(input_path), alpha=True, mismatch=1)
+        clip = initialize_clip(src)
+        # Extract alpha from frame properties
+        alpha = core.std.PropToClip(clip)
+        # Convert alpha to RGBS for the model
+        alpha = core.resize.Bicubic(
+            alpha,
+            format=vs.RGBS,
+            transfer_in=13,
+            primaries_in=1,
+            range_in=1,
+            range=1,
+        )
     elif ext in {".webp", ".gif"}:
         src = BestSource.source(str(input_path))
+        clip = initialize_clip(src)
+        # Extract alpha from frame properties
+        alpha = core.std.PropToClip(clip)
+        # Convert alpha to RGBS for the model
+        alpha = core.resize.Bicubic(
+            alpha,
+            format=vs.RGBS,
+            transfer_in=13,
+            primaries_in=1,
+            range_in=1,
+            range=1,
+        )
     else:
         raise ValueError("HQ alpha workflow only supports PNG / GIF / WEBP inputs")
-
-    clip = initialize_clip(src)
-
-    # Extract alpha from frame properties
-    alpha = core.std.PropToClip(clip)
-
-    # Convert alpha to RGBS for the model
-    alpha = core.resize.Bicubic(
-        alpha,
-        format=vs.RGBS,
-        transfer_in=13,
-        primaries_in=1,
-        range_in=1,
-        range=1,
-    )
 
     # Apply pre-scaling if enabled (before padding and upscaling)
     alpha = apply_prescale(alpha, settings)
