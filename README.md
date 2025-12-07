@@ -1,5 +1,7 @@
 # VapourSynth Image Upscaler
 
+Archived because I have something MUCH better coming soon. This is the prototype I guess?
+
 A Windows desktop tool for batch image super-resolution using VapourSynth and TensorRT.
 
 ![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
