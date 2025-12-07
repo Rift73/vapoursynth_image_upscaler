@@ -832,12 +832,21 @@ class ClipboardWorkerThread(QThread):
         self._run_worker(script_path, "--worker", output_file.parent, env)
 
         # Run alpha worker if the image has alpha (auto-detected)
-        if _image_has_alpha(self.input_file):
+        has_alpha = _image_has_alpha(self.input_file)
+        # Log to debug file
+        log_file = TEMP_BASE / "worker_debug.log"
+        with open(log_file, "a", encoding="utf-8") as log:
+            log.write(f"[Clipboard] has_alpha check for {self.input_file.name}: {has_alpha}\n")
+
+        if has_alpha:
             self._run_worker(script_path, "--alpha-worker", output_file.parent, env)
 
         # Find the output file using the path file written by the worker
         # This handles cases with model suffix appended, etc.
         expected_output = read_output_path_file(self.input_file.stem)
+
+        with open(log_file, "a", encoding="utf-8") as log:
+            log.write(f"[Clipboard] read_output_path_file result: {expected_output}\n")
 
         if expected_output is None:
             # Fallback: look for common output names
@@ -845,6 +854,9 @@ class ClipboardWorkerThread(QThread):
             if not expected_output.exists():
                 # Try original extension
                 expected_output = clipboard_tmp_dir / f"{self.input_file.stem}{self.input_file.suffix}"
+
+        with open(log_file, "a", encoding="utf-8") as log:
+            log.write(f"[Clipboard] Final expected_output: {expected_output}, exists: {expected_output.exists() if expected_output else False}\n")
 
         if expected_output and expected_output.exists():
             self.status_signal.emit("Image copied to clipboard!")
@@ -937,20 +949,29 @@ class ClipboardWorkerThread(QThread):
                 str(output_dir),  # secondary_dir (unused)
             ]
 
+        # Log file for worker output (useful for debugging)
+        log_file = TEMP_BASE / "worker_debug.log"
+
         if sys.platform == "win32":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
 
-            subprocess.run(
-                cmd,
-                check=False,
-                env=env,
-                creationflags=CREATE_NO_WINDOW,
-                startupinfo=startupinfo,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            with open(log_file, "a", encoding="utf-8") as log:
+                log.write(f"\n{'='*60}\n")
+                log.write(f"Clipboard Worker: {mode} | File: {self.input_file.name}\n")
+                log.write(f"{'='*60}\n")
+                log.flush()
+
+                subprocess.run(
+                    cmd,
+                    check=False,
+                    env=env,
+                    creationflags=CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log,
+                    stderr=log,
+                )
         else:
             subprocess.run(cmd, check=False, env=env)
